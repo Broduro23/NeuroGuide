@@ -1,4 +1,3 @@
-from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework.response import Response
@@ -7,9 +6,6 @@ from .dev_assessment import predict_developmental_probabilities
 from .safety_api import predict_safety
 from .recommendation_engine import recommend_content
 from .temp_store import get_all_content, add_content
-import json
-from django.http import JsonResponse
-from django.views.decorators.http import require_http_methods
 import logging
 
 logger = logging.getLogger(__name__)
@@ -168,23 +164,15 @@ class SafetyPredictionView(APIView):
             )
 class RecommendationView(APIView):
 
-    def add_learning_content(request):
+    def post(self, request):
         """
         Assess a learning resource and add it to the temporary library.
         """
-
-        try:
-            data = json.loads(request.body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return JsonResponse(
-                {"error": "Invalid JSON request."},
-                status=400,
-            )
-
+        data = request.data
         if not isinstance(data, dict):
-            return JsonResponse(
+            return Response(
                 {"error": "Request body must be a JSON object."},
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         title = data.get("title")
@@ -195,21 +183,21 @@ class RecommendationView(APIView):
 
         # Validate title and text.
         if not isinstance(title, str) or not title.strip():
-            return JsonResponse(
+            return Response(
                 {"error": "A title is required."},
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not isinstance(text, str) or not text.strip():
-            return JsonResponse(
+            return Response(
                 {"error": "Non-empty content text is required."},
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if len(text) > 5000:
-            return JsonResponse(
+            return Response(
                 {"error": "Text must not exceed 5000 characters."},
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Validate age bounds.
@@ -221,46 +209,52 @@ class RecommendationView(APIView):
             or age_min < 0
             or age_max < age_min
         ):
-            return JsonResponse(
+            return Response(
                 {
                     "error": (
                         "Provide valid age_min and age_max integers. "
                         "age_max must be greater than or equal to age_min."
                     )
                 },
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not isinstance(content_type, str) or not content_type.strip():
-            return JsonResponse(
+            return Response(
                 {"error": "content_type must be a non-empty string."},
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         text = text.strip()
 
         try:
             # Step 1: Run the safety classifier.
-            safety_result = predict_safety(text)
-
-            if not isinstance(safety_result, dict):
-                return JsonResponse(
+            raw_safety_result = predict_safety(text)
+            if isinstance(raw_safety_result, tuple) and len(raw_safety_result) == 2:
+                safety_label, confidence = raw_safety_result
+                safety_result = {
+                    "label": str(safety_label),
+                    "confidence": float(confidence),
+                }
+            elif isinstance(raw_safety_result, dict):
+                safety_result = raw_safety_result
+                safety_label = safety_result.get("label", "")
+            else:
+                return Response(
                     {"error": "Invalid safety classifier response."},
-                    status=503,
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
 
-            safety_label = str(
-                safety_result.get("label", "")
-            ).strip().lower()
+            safety_label = str(safety_label).strip().lower()
 
             # Fail closed if the result is not recognized.
             if safety_label not in {"safe", "unsafe"}:
-                return JsonResponse(
+                return Response(
                     {
                         "error": "Safety assessment was inconclusive.",
                         "stored": False,
                     },
-                    status=503,
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
 
             # Step 2: If unsafe, store it as ineligible.
@@ -278,7 +272,7 @@ class RecommendationView(APIView):
                     "recommendation_eligible": False,
                 })
 
-                return JsonResponse(
+                return Response(
                     {
                         "message": (
                             "Content assessed and excluded from "
@@ -292,7 +286,7 @@ class RecommendationView(APIView):
                             "recommendation_eligible": False,
                         },
                     },
-                    status=201,
+                    status=status.HTTP_201_CREATED,
                 )
 
             # Step 3: Run developmental assessment for safe content.
@@ -301,14 +295,14 @@ class RecommendationView(APIView):
             )
 
             if not isinstance(developmental_scores, dict):
-                return JsonResponse(
+                return Response(
                     {
                         "error": (
                             "Invalid developmental classifier response."
                         ),
                         "stored": False,
                     },
-                    status=503,
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
 
             # Step 4: Store the assessed content.
@@ -325,7 +319,7 @@ class RecommendationView(APIView):
                 "recommendation_eligible": True,
             })
 
-            return JsonResponse(
+            return Response(
                 {
                     "message": "Content assessed and added successfully.",
                     "content": {
@@ -338,21 +332,21 @@ class RecommendationView(APIView):
                         "recommendation_eligible": True,
                     },
                 },
-                status=201,
+                status=status.HTTP_201_CREATED,
             )
 
         except Exception:
             logger.exception("Failed to assess learning content.")
 
-            return JsonResponse(
+            return Response(
                 {
                     "error": "Content assessment failed.",
                     "stored": False,
                 },
-                status=500,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-    @require_http_methods(["GET"])  
-    def list_learning_content(request):
+
+    def get(self, request):
         """
         Return a summary of all resources in the temporary library.
         """
@@ -375,31 +369,51 @@ class RecommendationView(APIView):
                 ),
             })
 
-        return JsonResponse({
+        return Response({
             "count": len(results),
             "content": results,
         })
-    @require_http_methods(["POST"])
-    def get_recommendations(request):
+
+
+class ContentRecommendationView(APIView):
+
+    def post(self, request):
         """
         Recommend assessed learning resources based on age and goals.
         """
+        data = request.data
+        if not isinstance(data, dict):
+            return Response(
+                {"error": "Request body must be a JSON object."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        age = data.get("age")
+        learning_goals = data.get("learning_goals")
+        top_n = data.get("top_n", 5)
 
         try:
-            data = json.loads(request.body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return JsonResponse(
-                {"error": "Invalid JSON request."},
-                status=400,
+            recommendations = recommend_content(
+                age=age,
+                learning_goals=learning_goals,
+                top_n=top_n,
+            )
+        except ValueError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception("Failed to generate content recommendations.")
+            return Response(
+                {"error": "Recommendation generation failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        if not isinstance(data, dict):
-            return JsonResponse(
-                {"error": "Request body must be a JSON object."},
-                status=400,
-            )
-    
-class ContentRecommendationView(RecommendationView):
-
-    def post(self, request):
-        return self.recommend(request)          
+        return Response(
+            {
+                "count": len(recommendations),
+                "recommendations": recommendations,
+            },
+            status=status.HTTP_200_OK,
+        )
