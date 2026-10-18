@@ -7,6 +7,7 @@ from .views import RecommendationView
 from .views import ContentRecommendationView
 from .views import (
     ChildProfileViewSet,
+    ContentDetailView,
     LoginView,
     RegisterView,
     UserProfileView,
@@ -33,6 +34,11 @@ urlpatterns = [
         "content/",
         RecommendationView.as_view(),
         name="content-library",
+    ),
+    path(
+        "content/<int:content_id>/",
+        ContentDetailView.as_view(),
+        name="content-detail",
     ),
 
     path(

@@ -7,11 +7,13 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RegisterSerializer, UserProfileSerializer, ChildProfileSerializer
-from .models import ChildProfile
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from .models import ChildProfile, Content
 from .dev_assessment import predict_developmental_probabilities
 from .safety_api import predict_safety
 from .recommendation_engine import recommend_content
-from .temp_store import get_all_content, add_content
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -197,218 +199,496 @@ class SafetyPredictionView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+def serialize_content(content):
+    """Convert a Content instance into a JSON-ready dictionary."""
+
+    return {
+        "id": content.pk,
+        "title": content.title,
+        "text": content.text,
+        "source_filename": content.source_filename,
+        "content_type": content.content_type,
+        "age_min": content.age_min,
+        "age_max": content.age_max,
+        "safety_label": content.safety_label,
+        "safety_confidence": content.safety_confidence,
+        "safety_assessment": content.safety_assessment,
+        "developmental_scores": content.developmental_scores,
+        "assessment_status": content.assessment_status,
+        "recommendation_eligible": content.recommendation_eligible,
+        "created_at": content.created_at.isoformat(),
+        "updated_at": content.updated_at.isoformat(),
+    }
+
+
+def extract_content_text(request):
+    """
+    Extract learning content from either a JSON request or a .txt upload.
+
+    Returns:
+        (text, filename, error)
+    """
+
+    uploaded_file = request.FILES.get("file")
+
+    if uploaded_file is not None:
+        if not uploaded_file.name.lower().endswith(".txt"):
+            return None, None, "Only .txt files are supported."
+
+        max_file_size = 2 * 1024 * 1024
+
+        if uploaded_file.size > max_file_size:
+            return None, None, "The uploaded file must not exceed 2 MB."
+
+        try:
+            text = uploaded_file.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return None, None, "The uploaded file must use UTF-8 encoding."
+
+        filename = uploaded_file.name
+
+    else:
+        text = request.data.get("text", "")
+        filename = ""
+
+    if not isinstance(text, str) or not text.strip():
+        return None, None, "Learning content text is required."
+
+    if len(text) > 100_000:
+        return None, None, "Content must not exceed 100,000 characters."
+
+    return text.strip(), filename, None
+
+
+def normalize_safety_result(result):
+    """
+    Normalize a safety-model result.
+
+    Supported tuple example:
+        ("Safe", 0.95)
+    Expected dictionary example:
+        {"label": "safe", "confidence": 0.95}
+    """
+
+    if isinstance(result, (tuple, list)) and len(result) == 2:
+        raw_label, raw_confidence = result
+        label = str(raw_label).lower().strip()
+
+        try:
+            confidence = float(raw_confidence)
+        except (TypeError, ValueError, OverflowError):
+            confidence = None
+
+        details = {
+            "label": raw_label,
+            "confidence": confidence,
+        }
+
+    elif isinstance(result, str):
+        label = result.lower().strip()
+        confidence = None
+        details = {"label": result}
+
+    elif isinstance(result, dict):
+        label = str(
+            result.get("safety_label", result.get("label", result.get("prediction", "")))
+        ).lower().strip()
+
+        raw_confidence = result.get("confidence", result.get("score"))
+
+        try:
+            confidence = (
+                float(raw_confidence)
+                if raw_confidence is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            confidence = None
+
+        details = result
+
+    else:
+        raise ValueError("Unsupported safety-model response format.")
+
+    if label not in {"safe", "unsafe"}:
+        label = "inconclusive"
+
+    if confidence is not None and not 0 <= confidence <= 1:
+        confidence = None
+
+    return label, confidence, details
+
+
+def normalize_developmental_result(result):
+    """
+    Normalize developmental-model predictions into a score dictionary.
+
+    Expected example:
+        {
+            "number_identification": 0.92,
+            "working_memory": 0.78
+        }
+
+    If your model returns a nested dictionary, adapt this function
+    to extract its actual score mapping.
+    """
+
+    if not isinstance(result, dict):
+        raise ValueError(
+            "Developmental model must return a dictionary of scores."
+        )
+
+    # Support a common nested response format.
+    scores = result.get("developmental_scores", result)
+
+    if not isinstance(scores, dict) or not scores:
+        raise ValueError("No developmental scores were returned.")
+
+    normalized = {}
+
+    for label, value in scores.items():
+        try:
+            score = float(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"Invalid developmental score for '{label}'."
+            )
+
+        if not 0 <= score <= 1:
+            raise ValueError(
+                f"Developmental score for '{label}' must be between 0 and 1."
+            )
+
+        normalized[label] = score
+
+    return normalized
+
 class RecommendationView(APIView):
+    """
+    Submit educational content, assess it, and persist it in PostgreSQL.
+
+    GET  /api/content/  -> List stored content.
+    POST /api/content/ -> Submit and assess content.
+    """
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get(self, request):
+        """
+        Retrieve content records from PostgreSQL.
+
+        Unsafe and ineligible records are not exposed by default.
+        """
+
+        queryset = Content.objects.filter(
+            safety_label=Content.SafetyStatus.SAFE,
+            assessment_status=Content.AssessmentStatus.COMPLETED,
+            recommendation_eligible=True,
+        )
+
+        results = [
+            serialize_content(item)
+            for item in queryset
+        ]
+
+        return Response(results, status=status.HTTP_200_OK)
 
     def post(self, request):
         """
-        Assess a learning resource and add it to the temporary library.
+        Save content, run safety classification, and then developmental
+        assessment when the safety policy permits it.
         """
-        data = request.data
-        if not isinstance(data, dict):
+
+        text, filename, error = extract_content_text(request)
+
+        if error:
             return Response(
-                {"error": "Request body must be a JSON object."},
+                {"error": error},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        title = data.get("title")
-        text = data.get("text")
-        age_min = data.get("age_min")
-        age_max = data.get("age_max")
-        content_type = data.get("content_type", "text")
+        title = request.data.get("title", "").strip()
 
-        # Validate title and text.
-        if not isinstance(title, str) or not title.strip():
+        if not title:
+            title = filename.rsplit(".", 1)[0] if filename else "Untitled content"
+
+        if len(title) > 255:
             return Response(
-                {"error": "A title is required."},
+                {"error": "Title must not exceed 255 characters."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not isinstance(text, str) or not text.strip():
+        try:
+            age_min = int(request.data.get("age_min"))
+            age_max = int(request.data.get("age_max"))
+        except (TypeError, ValueError):
             return Response(
-                {"error": "Non-empty content text is required."},
+                {"error": "age_min and age_max must be integers."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(text) > 5000:
-            return Response(
-                {"error": "Text must not exceed 5000 characters."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Validate age bounds.
-        if (
-            not isinstance(age_min, int)
-            or isinstance(age_min, bool)
-            or not isinstance(age_max, int)
-            or isinstance(age_max, bool)
-            or age_min < 0
-            or age_max < age_min
-        ):
+        if not (0 <= age_min <= age_max <= 83):
             return Response(
                 {
                     "error": (
-                        "Provide valid age_min and age_max integers. "
-                        "age_max must be greater than or equal to age_min."
+                        "Age range must satisfy "
+                        "0 <= age_min <= age_max <= 83 months."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not isinstance(content_type, str) or not content_type.strip():
-            return Response(
-                {"error": "content_type must be a non-empty string."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        content_type = request.data.get("content_type", "text")
 
-        text = text.strip()
+        # Persist the submission before running expensive ML inference.
+        content = Content.objects.create(
+            title=title,
+            text=text,
+            source_filename=filename,
+            content_type=content_type,
+            age_min=age_min,
+            age_max=age_max,
+            safety_label=Content.SafetyStatus.PENDING,
+            assessment_status=Content.AssessmentStatus.PENDING,
+            recommendation_eligible=False,
+            created_by=request.user,
+        )
 
         try:
-            # Step 1: Run the safety classifier.
-            raw_safety_result = predict_safety(text)
-            if isinstance(raw_safety_result, tuple) and len(raw_safety_result) == 2:
-                safety_label, confidence = raw_safety_result
-                safety_result = {
-                    "label": str(safety_label),
-                    "confidence": float(confidence),
-                }
-            elif isinstance(raw_safety_result, dict):
-                safety_result = raw_safety_result
-                safety_label = safety_result.get("label", "")
-            else:
-                return Response(
-                    {"error": "Invalid safety classifier response."},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            # Stage 1: safety classification.
+            safety_result = predict_safety(text)
+
+            safety_label, confidence, details = normalize_safety_result(
+                safety_result
+            )
+
+            content.safety_label = safety_label
+            content.safety_confidence = confidence
+            content.safety_assessment = details
+
+            # Stage 2: assess developmental domains only if safety passes.
+            if safety_label != Content.SafetyStatus.SAFE:
+                content.assessment_status = (
+                    Content.AssessmentStatus.COMPLETED
                 )
-
-            safety_label = str(safety_label).strip().lower()
-
-            # Fail closed if the result is not recognized.
-            if safety_label not in {"safe", "unsafe"}:
-                return Response(
-                    {
-                        "error": "Safety assessment was inconclusive.",
-                        "stored": False,
-                    },
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-
-            # Step 2: If unsafe, store it as ineligible.
-            if safety_label == "unsafe":
-                item = add_content({
-                    "title": title.strip(),
-                    "text": text,
-                    "age_min": age_min,
-                    "age_max": age_max,
-                    "content_type": content_type.strip(),
-                    "safety_label": "Unsafe",
-                    "safety_assessment": safety_result,
-                    "developmental_scores": {},
-                    "assessment_complete": True,
-                    "recommendation_eligible": False,
-                })
+                content.recommendation_eligible = False
+                content.save()
 
                 return Response(
                     {
                         "message": (
-                            "Content assessed and excluded from "
-                            "recommendations because it was classified "
-                            "as unsafe."
+                            "Content was assessed but is not eligible "
+                            "for recommendations."
                         ),
-                        "content": {
-                            "id": item["id"],
-                            "title": item["title"],
-                            "safety": item["safety_assessment"],
-                            "recommendation_eligible": False,
-                        },
+                        "content": serialize_content(content),
                     },
                     status=status.HTTP_201_CREATED,
                 )
 
-            # Step 3: Run developmental assessment for safe content.
-            developmental_scores = (
+            developmental_result = (
                 predict_developmental_probabilities(text)
             )
 
-            if not isinstance(developmental_scores, dict):
-                return Response(
-                    {
-                        "error": (
-                            "Invalid developmental classifier response."
-                        ),
-                        "stored": False,
-                    },
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            scores = normalize_developmental_result(
+                developmental_result
+            )
+
+            # Save all assessment results together.
+            with transaction.atomic():
+                content.developmental_scores = scores
+                content.assessment_status = (
+                    Content.AssessmentStatus.COMPLETED
                 )
 
-            # Step 4: Store the assessed content.
-            item = add_content({
-                "title": title.strip(),
-                "text": text,
-                "age_min": age_min,
-                "age_max": age_max,
-                "content_type": content_type.strip(),
-                "safety_label": "Safe",
-                "safety_assessment": safety_result,
-                "developmental_scores": developmental_scores,
-                "assessment_complete": True,
-                "recommendation_eligible": True,
-            })
+                # Only eligible if both required assessments succeeded.
+                content.recommendation_eligible = (
+                    content.safety_label
+                    == Content.SafetyStatus.SAFE
+                    and bool(content.developmental_scores)
+                )
+
+                content.save()
 
             return Response(
                 {
-                    "message": "Content assessed and added successfully.",
-                    "content": {
-                        "id": item["id"],
-                        "title": item["title"],
-                        "safety": item["safety_assessment"],
-                        "developmental_scores": (
-                            item["developmental_scores"]
-                        ),
-                        "recommendation_eligible": True,
-                    },
+                    "message": "Content submitted and assessed successfully.",
+                    "content": serialize_content(content),
                 },
                 status=status.HTTP_201_CREATED,
             )
 
         except Exception:
-            logger.exception("Failed to assess learning content.")
+            logger.exception(
+                "Content assessment failed for content ID %s",
+                content.pk,
+            )
+
+            # Keep the content record, but fail closed.
+            content.assessment_status = (
+                Content.AssessmentStatus.FAILED
+            )
+            content.recommendation_eligible = False
+            content.save(
+                update_fields=[
+                    "assessment_status",
+                    "recommendation_eligible",
+                    "updated_at",
+                ]
+            )
 
             return Response(
                 {
-                    "error": "Content assessment failed.",
-                    "stored": False,
+                    "error": (
+                        "Content was saved, but its assessment failed. "
+                        "It is not eligible for recommendations."
+                    ),
+                    "content_id": content.pk,
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    def get(self, request):
-        """
-        Return a summary of all resources in the temporary library.
-        """
+class ContentDetailView(APIView):
+    """
+    Retrieve, update, or delete an educational content record.
 
-        content_items = get_all_content()
+    GET    /api/content/<id>/
+    PATCH  /api/content/<id>/
+    DELETE /api/content/<id>/
+    """
 
-        results = []
+    permission_classes = [IsAuthenticated]
 
-        for item in content_items:
-            results.append({
-                "id": item["id"],
-                "title": item["title"],
-                "content_type": item["content_type"],
-                "age_min": item["age_min"],
-                "age_max": item["age_max"],
-                "safety_label": item["safety_label"],
-                "assessment_complete": item["assessment_complete"],
-                "recommendation_eligible": (
-                    item["recommendation_eligible"]
+    def get_object(self, content_id):
+        return get_object_or_404(
+            Content,
+            pk=content_id,
+        )
+
+    def get(self, request, content_id):
+        content = self.get_object(content_id)
+
+        return Response(
+            serialize_content(content),
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, content_id):
+        content = self.get_object(content_id)
+
+        allowed_fields = {
+            "title",
+            "text",
+            "age_min",
+            "age_max",
+            "content_type",
+        }
+
+        unexpected_fields = set(request.data.keys()) - allowed_fields
+
+        if unexpected_fields:
+            return Response(
+                {
+                    "error": "Unsupported fields.",
+                    "fields": sorted(unexpected_fields),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        updated = {}
+
+        for field in allowed_fields:
+            if field in request.data:
+                updated[field] = request.data[field]
+
+        new_age_min = updated.get("age_min", content.age_min)
+        new_age_max = updated.get("age_max", content.age_max)
+
+        try:
+            new_age_min = int(new_age_min)
+            new_age_max = int(new_age_max)
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "Age values must be integers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not (0 <= new_age_min <= new_age_max <= 83):
+            return Response(
+                {"error": "Invalid age range."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if "title" in updated:
+            if not isinstance(updated["title"], str) or not updated["title"].strip():
+                return Response(
+                    {"error": "Title must not be empty."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if len(updated["title"]) > 255:
+                return Response(
+                    {"error": "Title must not exceed 255 characters."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Any change to assessed content or its intended age range
+        # invalidates previous results and eligibility.
+        reassess = any(
+            field in updated
+            for field in ("text", "age_min", "age_max")
+        )
+
+        for field, value in updated.items():
+            if field == "text":
+                if not isinstance(value, str) or not value.strip():
+                    return Response(
+                        {"error": "Content text must not be empty."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if len(value) > 100_000:
+                    return Response(
+                        {"error": "Content exceeds the maximum text length."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                value = value.strip()
+
+            setattr(content, field, value)
+
+        content.age_min = new_age_min
+        content.age_max = new_age_max
+
+        if reassess:
+            content.safety_label = Content.SafetyStatus.PENDING
+            content.safety_confidence = None
+            content.safety_assessment = {}
+            content.developmental_scores = {}
+            content.assessment_status = (
+                Content.AssessmentStatus.PENDING
+            )
+            content.recommendation_eligible = False
+
+        content.save()
+
+        return Response(
+            {
+                "message": (
+                    "Content updated. Reassessment is required."
+                    if reassess
+                    else "Content updated successfully."
                 ),
-            })
+                "content": serialize_content(content),
+            },
+            status=status.HTTP_200_OK,
+        )
 
-        return Response({
-            "count": len(results),
-            "content": results,
-        })
+    def delete(self, request, content_id):
+        content = self.get_object(content_id)
+        content.delete()
 
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 class ContentRecommendationView(APIView):
 
@@ -453,5 +733,7 @@ class ContentRecommendationView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
 
 

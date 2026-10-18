@@ -1,10 +1,11 @@
 # classifier/recommendation_engine.py
 
-from .temp_store import get_all_content
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
+from .models import Content
 
 
 DEVELOPMENTAL_LABELS = [
-    
     "number_identification",
     "number_size_discrimination",
     "letter_alphabet_knowledge",
@@ -30,24 +31,36 @@ DEVELOPMENTAL_LABELS = [
 
 def recommend_content(age, learning_goals, top_n=5):
     """
-    Recommend learning resources based on the child's age
-    and selected developmental goals.
+    Recommend educational content using PostgreSQL records.
 
-    Only assessed, safe content is eligible.
+    Content must:
+    - Have a safe classification.
+    - Have completed its assessment.
+    - Be marked as eligible for recommendations.
+    - Match the requested age range.
+    - Have valid developmental scores for every requested goal.
     """
 
-    if not isinstance(age, int) or isinstance(age, bool) or age < 0:
-        raise ValueError("Age must be a non-negative integer.")
+    # 1. Validate age.
+    if (
+        not isinstance(age, int)
+        or isinstance(age, bool)
+        or not 0 <= age <= 83
+    ):
+        raise ValueError("Age must be an integer between 0 and 83 months.")
 
+    # 2. Validate learning goals.
     if not isinstance(learning_goals, list) or not learning_goals:
         raise ValueError(
             "Provide at least one developmental learning goal."
         )
 
-    if not isinstance(top_n, int) or isinstance(top_n, bool) or top_n < 1:
-        raise ValueError("top_n must be a positive integer.")
+    if any(not isinstance(goal, str) for goal in learning_goals):
+        raise ValueError("Every learning goal must be a string.")
 
-    # Validate goals against the trained model's labels.
+    if len(set(learning_goals)) != len(learning_goals):
+        raise ValueError("Duplicate learning goals are not allowed.")
+
     invalid_goals = [
         goal for goal in learning_goals
         if goal not in DEVELOPMENTAL_LABELS
@@ -58,72 +71,70 @@ def recommend_content(age, learning_goals, top_n=5):
             f"Unknown developmental goals: {invalid_goals}"
         )
 
+    # 3. Validate the requested number of recommendations.
+    if (
+        not isinstance(top_n, int)
+        or isinstance(top_n, bool)
+        or top_n < 1
+    ):
+        raise ValueError("top_n must be a positive integer.")
+
+    # 4. Retrieve eligible content from PostgreSQL.
+    content_items = Content.objects.filter(
+        safety_label=Content.SafetyStatus.SAFE,
+        assessment_status=Content.AssessmentStatus.COMPLETED,
+        recommendation_eligible=True,
+        age_min__lte=age,
+        age_max__gte=age,
+    )
+
     recommendations = []
 
-    for item in get_all_content():
+    for item in content_items.iterator():
 
-        # 1. Exclude content that has not passed the safety gate.
-        if item.get("safety_label", "").lower() != "safe":
-            continue
-
-        if not item.get("assessment_complete", False):
-            continue
-
-        # 2. Apply the configured age range.
-        age_min = item.get("age_min")
-        age_max = item.get("age_max")
-
-        if not isinstance(age_min, int) or isinstance(age_min, bool):
-            continue
-
-        if not isinstance(age_max, int) or isinstance(age_max, bool):
-            continue
-
-        if age_min > age_max:
-            continue
-
-        if not age_min <= age <= age_max:
-            continue
-
-        # 3. Obtain developmental scores.
-        scores = item.get("developmental_scores", {})
+        scores = item.developmental_scores
 
         if not isinstance(scores, dict):
             continue
 
+        # 5. Retrieve scores for every requested learning goal.
+        goal_scores = {}
+
         try:
-            goal_scores = {
-                goal: float(scores[goal])
-                for goal in learning_goals
-                if goal in scores
-            }
-        except (TypeError, ValueError):
+            for goal in learning_goals:
+                if goal not in scores:
+                    break
+
+                score = float(scores[goal])
+
+                if not 0.0 <= score <= 1.0:
+                    break
+
+                goal_scores[goal] = score
+
+            else:
+                # All requested goals have valid scores.
+                pass
+
+            if len(goal_scores) != len(learning_goals):
+                continue
+
+        except (TypeError, ValueError, OverflowError):
             continue
 
-        # Require a score for every requested goal.
-        if len(goal_scores) != len(learning_goals):
-            continue
-
-        # Check that model outputs are valid.
-        if any(
-            score < 0 or score > 1
-            for score in goal_scores.values()
-        ):
-            continue
-
-        # 4. Calculate the mean score across requested goals.
+        # 6. Calculate relevance score.
         relevance_score = (
-            sum(goal_scores.values()) / len(goal_scores)
+            sum(goal_scores.values()) / len(learning_goals)
         )
 
-        # 5. Build the recommendation result.
+        # 7. Build the recommendation result.
         recommendations.append({
-            "id": item["id"],
-            "title": item["title"],
-            "content_type": item.get("content_type", "text"),
+            "id": item.pk,
+            "title": item.title,
+            "content_type": item.content_type,
             "age_range": {
-                "minimum": age_min,
-                "maximum": age_max,
+                "minimum": item.age_min,
+                "maximum": item.age_max,
             },
             "relevance_score": round(relevance_score, 4),
             "matched_goals": [
@@ -137,10 +148,12 @@ def recommend_content(age, learning_goals, top_n=5):
             },
         })
 
-    # 6. Rank from highest to lowest relevance.
+    # 8. Rank by relevance, with ID as a deterministic tie-breaker.
     recommendations.sort(
-        key=lambda item: item["relevance_score"],
-        reverse=True,
+        key=lambda item: (
+            -item["relevance_score"],
+            item["id"],
+        )
     )
 
     return recommendations[:top_n]
