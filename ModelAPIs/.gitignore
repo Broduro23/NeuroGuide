@@ -2,4 +2,6 @@
 **/venv/
 /models/devassessment
 /models/
+.env
+.env.*
 

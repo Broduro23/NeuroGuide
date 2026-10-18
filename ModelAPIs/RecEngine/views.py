@@ -1,7 +1,13 @@
 from rest_framework.views import APIView
+from rest_framework import viewsets
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import generics, status
+from rest_framework.permissions import AllowAny
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import RegisterSerializer, UserProfileSerializer, ChildProfileSerializer
+from .models import ChildProfile
 from .dev_assessment import predict_developmental_probabilities
 from .safety_api import predict_safety
 from .recommendation_engine import recommend_content
@@ -10,6 +16,35 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+class RegisterView(generics.CreateAPIView):
+    serializer_class = RegisterSerializer
+    permission_classes = [AllowAny]
+
+
+class LoginView(TokenObtainPairView):
+    permission_classes = [AllowAny]
+
+
+class UserProfileView(generics.RetrieveUpdateAPIView):
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+
+
+class ChildProfileViewSet(viewsets.ModelViewSet):
+    serializer_class = ChildProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return ChildProfile.objects.filter(
+            caregiver=self.request.user
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(caregiver=self.request.user)
 
 # Create your views here.
 class DevelopmentalPredictionView(APIView):
@@ -377,6 +412,7 @@ class RecommendationView(APIView):
 
 class ContentRecommendationView(APIView):
 
+
     def post(self, request):
         """
         Recommend assessed learning resources based on age and goals.
@@ -417,3 +453,5 @@ class ContentRecommendationView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+

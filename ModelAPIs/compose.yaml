@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-neuroguide}
+      POSTGRES_USER: ${DB_USER:-neuroguide}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-neuroguide_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  neuroguide-api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_ENGINE: postgres
+      DB_NAME: ${DB_NAME:-neuroguide}
+      DB_USER: ${DB_USER:-neuroguide}
+      DB_PASSWORD: ${DB_PASSWORD:-neuroguide_dev_password}
+      DB_HOST: db
+      DB_PORT: 5432
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

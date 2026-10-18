@@ -1,0 +1,19 @@
+# Version control
+.git
+
+# Python environments and generated files
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Local database and editor/OS files
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/
