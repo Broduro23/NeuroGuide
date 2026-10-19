@@ -9,7 +9,9 @@ NeuroGuide Model APIs is a Django REST Framework backend for caregiver accounts,
 - Classify text as safe or unsafe and return the model confidence.
 - Score text against 20 developmental domains and return probabilities and domains at or above a 0.5 threshold.
 - Submit learning content for safety and developmental assessment. Submissions are stored in PostgreSQL; only safe, fully assessed content is marked eligible for recommendations.
-- List eligible content, retrieve individual content records, edit or delete records, and request ranked recommendations filtered by age and developmental goals.
+- Manage the full content library: list and retrieve records, update or delete them, and rerun assessments.
+- Request ranked recommendations using a caregiver's saved child profile.
+- Persist recommendation history with a snapshot of the child, goals, and returned content; record views, clicks, saves, completions, dismissals, and caregiver feedback.
 - Accept plain text in JSON or `.txt` uploads for the prediction and content submission endpoints.
 
 ## Run with Docker Compose
@@ -74,7 +76,9 @@ Registration and login are public. Login returns `access` and `refresh` JWTs. Fo
 Authorization: Bearer <access-token>
 ```
 
-Protected endpoints include profile, child profile, and content library/detail routes. Prediction and recommendation endpoints are currently public.
+Protected endpoints include profile, child profile, content library/detail routes, and recommendation/history routes. The standalone prediction endpoints remain public.
+
+For browser use, open a browsable API endpoint such as `/ModelAPIs/RecEngine/children/` and use the page's **Log in** link. This signs into the browsable API with a Django session; a JWT does not need to be pasted into browser forms. The same API continues to accept JWT bearer tokens from clients such as Postman or `curl`.
 
 ## Routes
 
@@ -83,14 +87,19 @@ Protected endpoints include profile, child profile, and content library/detail r
 | `POST` | `/register/` | Public | Create a user account. |
 | `POST` | `/login/` | Public | Obtain JWT access and refresh tokens. |
 | `POST` | `/refresh/` | Public | Exchange a refresh token for a new access token. |
+| `GET`, `POST` | `/api-auth/login/` | Django session | Sign in or out of the browsable API in a browser. |
 | `GET`, `PUT`, `PATCH` | `/profile/` | JWT | Retrieve or update the current user's profile. |
 | `GET`, `POST` | `/children/` | JWT | List the current user's children or create a child profile. |
 | `GET`, `PUT`, `PATCH`, `DELETE` | `/children/<id>/` | JWT | Retrieve or manage one of the current user's child profiles. |
 | `POST` | `/predict/` | Public | Return developmental probabilities and predicted domains for text. |
 | `POST` | `/safety/predict/` | Public | Classify text as safe or unsafe and return confidence. |
-| `GET`, `POST` | `/content/` | JWT | List eligible content or submit and assess new content. |
+| `GET`, `POST` | `/content/` | JWT | List all stored content records or submit and assess new content. |
 | `GET`, `PATCH`, `DELETE` | `/content/<id>/` | JWT | Retrieve, update, or delete a content record. Changes to text or age range reset assessment results and eligibility. |
-| `POST` | `/recommend/` | Public | Find ranked eligible content for an age and one or more learning goals. |
+| `POST` | `/content/<id>/assess/` | JWT | Rerun safety and, when safe, developmental assessments for a stored record. |
+| `POST` | `/recommend/` | JWT | Generate recommendations for one of the caregiver's saved child profiles and record the result in history. |
+| `GET` | `/recommend/history/` | JWT | List the caregiver's recommendation history; optionally filter with `?child_id=<id>`. |
+| `POST` | `/recommend/history/<history_id>/feedback/` | JWT | Add or update a 1–5 rating and optional text feedback for a result. |
+| `POST` | `/recommend/history/<history_id>/activity/` | JWT | Record a content `viewed`, `clicked`, `saved`, `completed`, or `dismissed` event for a result. |
 | `GET` | `/admin/` | Django admin | Open the Django administration site. |
 
 For example, the login endpoint is `http://localhost:8000/ModelAPIs/RecEngine/login/`.
@@ -172,19 +181,51 @@ Send an authenticated JSON `POST /content/` request with `text` or upload a `.tx
 
 The API checks safety first. Developmental scoring runs only when content is classified as safe. Content is recommendation-eligible only after both assessments complete successfully. Content text is limited to 100,000 characters; uploaded files are limited to 2 MB and must be UTF-8 `.txt` files.
 
-### Request recommendations
+### Manage stored content
 
-Send JSON to `POST /recommend/`:
+All content-management requests require a JWT access token. `GET /content/` lists records, including pending, unsafe, and failed assessments. `GET /content/<id>/` retrieves one record. `PATCH /content/<id>/` can update `title`, `text`, `age_min`, `age_max`, and `content_type`; changing the text or age range clears previous assessment results and makes the item ineligible until reassessed. `DELETE /content/<id>/` removes the record.
+
+To rerun the assessments, send an authenticated empty `POST` to `/content/<id>/assess/`. The safety model runs first. If it marks the content safe, the developmental model runs next and successful scores are saved. Unsafe or inconclusive records remain stored but are not eligible for recommendations.
+
+### Request recommendations for a saved child
+
+First create or update a child profile with an age and one or more valid `learning_goals`. Then send the child's ID to `POST /recommend/`:
 
 ```json
 {
-  "age": 36,
-  "learning_goals": ["number_identification", "working_memory"],
+  "child_id": 1,
   "top_n": 5
 }
 ```
 
-Age is in months (0–83). Learning goal names must match the model labels, such as `number_identification`, `working_memory`, `expressive_language`, or `self_regulation`. Results include relevance scores and per-goal scores. Only safe, fully assessed, eligible content matching the requested age and goals can be returned.
+The API reads age and goals from the authenticated caregiver's child profile; clients cannot request recommendations for another user's child. Learning goal names must match the model labels, such as `number_identification`, `working_memory`, `expressive_language`, or `self_regulation`. Results include relevance scores and per-goal scores, and each request is stored in recommendation history. Only safe, fully assessed, eligible content matching the child's age and goals can be returned.
+
+### Review history, log activity, and submit feedback
+
+List recommendation history with `GET /recommend/history/`; narrow it to one saved child using `GET /recommend/history/?child_id=1`. Each history record contains a snapshot of the recommendations, child, age, goals, feedback, and activity events.
+
+Log an activity for content included in a result with `POST /recommend/history/<history_id>/activity/`:
+
+```json
+{
+  "content_id": 12,
+  "event_type": "viewed",
+  "details": {"source": "child_dashboard"}
+}
+```
+
+Allowed event types are `viewed`, `clicked`, `saved`, `completed`, and `dismissed`.
+
+Submit or update a rating with `POST /recommend/history/<history_id>/feedback/`:
+
+```json
+{
+  "rating": 5,
+  "text": "This activity worked well."
+}
+```
+
+Ratings must be from 1 to 5; feedback text is optional and limited to 1,000 characters.
 
 ## Database inspection
 
@@ -194,7 +235,7 @@ Open a Postgres prompt using the credentials loaded in the database container:
 docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
-At the `psql` prompt, `\dt` lists tables. Registered accounts are stored in `auth_user`; child profiles are stored in `RecEngine_childprofile`; assessed learning content is stored in `RecEngine_content`.
+At the `psql` prompt, `\dt` lists tables. Registered accounts are stored in `auth_user`; child profiles are stored in `RecEngine_childprofile`; assessed learning content is stored in `RecEngine_content`; recommendation records and activity events are stored in `RecEngine_recommendationhistory` and `RecEngine_recommendationactivity`.
 
 ## Development notes
 

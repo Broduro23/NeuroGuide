@@ -7,8 +7,12 @@ from .views import RecommendationView
 from .views import ContentRecommendationView
 from .views import (
     ChildProfileViewSet,
+    ContentAssessmentView,
     ContentDetailView,
     LoginView,
+    RecommendationActivityView,
+    RecommendationFeedbackView,
+    RecommendationHistoryView,
     RegisterView,
     UserProfileView,
 )
@@ -36,6 +40,11 @@ urlpatterns = [
         name="content-library",
     ),
     path(
+        "content/<int:content_id>/assess/",
+        ContentAssessmentView.as_view(),
+        name="content-assess",
+    ),
+    path(
         "content/<int:content_id>/",
         ContentDetailView.as_view(),
         name="content-detail",
@@ -45,6 +54,21 @@ urlpatterns = [
         "recommend/",
         ContentRecommendationView.as_view(),
         name="recommend-content",
+    ),
+    path(
+        "recommend/history/",
+        RecommendationHistoryView.as_view(),
+        name="recommendation-history",
+    ),
+    path(
+        "recommend/history/<int:history_id>/feedback/",
+        RecommendationFeedbackView.as_view(),
+        name="recommendation-feedback",
+    ),
+    path(
+        "recommend/history/<int:history_id>/activity/",
+        RecommendationActivityView.as_view(),
+        name="recommendation-activity",
     ),
     path(
         "profile/",

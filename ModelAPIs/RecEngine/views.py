@@ -9,7 +9,12 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RegisterSerializer, UserProfileSerializer, ChildProfileSerializer
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from .models import ChildProfile, Content
+from .models import (
+    ChildProfile,
+    Content,
+    RecommendationActivity,
+    RecommendationHistory,
+)
 from .dev_assessment import predict_developmental_probabilities
 from .safety_api import predict_safety
 from .recommendation_engine import recommend_content
@@ -363,6 +368,65 @@ def normalize_developmental_result(result):
 
     return normalized
 
+
+def assess_content_record(content):
+    """Run safety and developmental assessment and persist the results."""
+    content.safety_label = Content.SafetyStatus.PENDING
+    content.safety_confidence = None
+    content.safety_assessment = {}
+    content.developmental_scores = {}
+    content.assessment_status = Content.AssessmentStatus.PENDING
+    content.recommendation_eligible = False
+    content.save()
+
+    try:
+        safety_result = predict_safety(content.text)
+        safety_label, confidence, details = normalize_safety_result(
+            safety_result
+        )
+
+        content.safety_label = safety_label
+        content.safety_confidence = confidence
+        content.safety_assessment = details
+
+        if safety_label != Content.SafetyStatus.SAFE:
+            content.assessment_status = Content.AssessmentStatus.COMPLETED
+            content.recommendation_eligible = False
+            content.save()
+            return content
+
+        developmental_result = predict_developmental_probabilities(
+            content.text
+        )
+        content.developmental_scores = normalize_developmental_result(
+            developmental_result
+        )
+        content.assessment_status = Content.AssessmentStatus.COMPLETED
+        content.recommendation_eligible = bool(content.developmental_scores)
+
+        with transaction.atomic():
+            content.save()
+
+        return content
+
+    except Exception:
+        logger.exception("Content assessment failed for content ID %s", content.pk)
+        content.assessment_status = Content.AssessmentStatus.FAILED
+        content.recommendation_eligible = False
+        content.save(
+            update_fields=[
+                "safety_label",
+                "safety_confidence",
+                "safety_assessment",
+                "developmental_scores",
+                "assessment_status",
+                "recommendation_eligible",
+                "updated_at",
+            ]
+        )
+        raise
+
+
 class RecommendationView(APIView):
     """
     Submit educational content, assess it, and persist it in PostgreSQL.
@@ -378,14 +442,10 @@ class RecommendationView(APIView):
         """
         Retrieve content records from PostgreSQL.
 
-        Unsafe and ineligible records are not exposed by default.
+        Return all stored content records for authenticated library managers.
         """
 
-        queryset = Content.objects.filter(
-            safety_label=Content.SafetyStatus.SAFE,
-            assessment_status=Content.AssessmentStatus.COMPLETED,
-            recommendation_eligible=True,
-        )
+        queryset = Content.objects.all()
 
         results = [
             serialize_content(item)
@@ -456,87 +516,8 @@ class RecommendationView(APIView):
         )
 
         try:
-            # Stage 1: safety classification.
-            safety_result = predict_safety(text)
-
-            safety_label, confidence, details = normalize_safety_result(
-                safety_result
-            )
-
-            content.safety_label = safety_label
-            content.safety_confidence = confidence
-            content.safety_assessment = details
-
-            # Stage 2: assess developmental domains only if safety passes.
-            if safety_label != Content.SafetyStatus.SAFE:
-                content.assessment_status = (
-                    Content.AssessmentStatus.COMPLETED
-                )
-                content.recommendation_eligible = False
-                content.save()
-
-                return Response(
-                    {
-                        "message": (
-                            "Content was assessed but is not eligible "
-                            "for recommendations."
-                        ),
-                        "content": serialize_content(content),
-                    },
-                    status=status.HTTP_201_CREATED,
-                )
-
-            developmental_result = (
-                predict_developmental_probabilities(text)
-            )
-
-            scores = normalize_developmental_result(
-                developmental_result
-            )
-
-            # Save all assessment results together.
-            with transaction.atomic():
-                content.developmental_scores = scores
-                content.assessment_status = (
-                    Content.AssessmentStatus.COMPLETED
-                )
-
-                # Only eligible if both required assessments succeeded.
-                content.recommendation_eligible = (
-                    content.safety_label
-                    == Content.SafetyStatus.SAFE
-                    and bool(content.developmental_scores)
-                )
-
-                content.save()
-
-            return Response(
-                {
-                    "message": "Content submitted and assessed successfully.",
-                    "content": serialize_content(content),
-                },
-                status=status.HTTP_201_CREATED,
-            )
-
+            assess_content_record(content)
         except Exception:
-            logger.exception(
-                "Content assessment failed for content ID %s",
-                content.pk,
-            )
-
-            # Keep the content record, but fail closed.
-            content.assessment_status = (
-                Content.AssessmentStatus.FAILED
-            )
-            content.recommendation_eligible = False
-            content.save(
-                update_fields=[
-                    "assessment_status",
-                    "recommendation_eligible",
-                    "updated_at",
-                ]
-            )
-
             return Response(
                 {
                     "error": (
@@ -547,6 +528,19 @@ class RecommendationView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        message = (
+            "Content submitted and assessed successfully."
+            if content.recommendation_eligible
+            else "Content was assessed but is not eligible for recommendations."
+        )
+        return Response(
+            {
+                "message": message,
+                "content": serialize_content(content),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 class ContentDetailView(APIView):
     """
@@ -690,12 +684,47 @@ class ContentDetailView(APIView):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+class ContentAssessmentView(APIView):
+    """Re-run safety and developmental assessment for a stored record."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, content_id):
+        content = get_object_or_404(Content, pk=content_id)
+
+        try:
+            assess_content_record(content)
+        except Exception:
+            return Response(
+                {
+                    "error": "Content assessment failed.",
+                    "content_id": content.pk,
+                    "assessment_status": content.assessment_status,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "message": (
+                    "Content reassessed successfully."
+                    if content.recommendation_eligible
+                    else "Content was assessed but is not eligible for recommendations."
+                ),
+                "content": serialize_content(content),
+            },
+            status=status.HTTP_200_OK,
+        )
+
 class ContentRecommendationView(APIView):
+
+    permission_classes = [IsAuthenticated]
 
 
     def post(self, request):
         """
-        Recommend assessed learning resources based on age and goals.
+        Recommend resources using the authenticated caregiver's saved child.
         """
         data = request.data
         if not isinstance(data, dict):
@@ -704,13 +733,39 @@ class ContentRecommendationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        age = data.get("age")
-        learning_goals = data.get("learning_goals")
+        child_id = data.get("child_id")
+        if isinstance(child_id, bool):
+            child_id = None
+        try:
+            child_id = int(child_id)
+        except (TypeError, ValueError, OverflowError):
+            return Response(
+                {"error": "Provide a valid child_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        child = get_object_or_404(
+            ChildProfile,
+            pk=child_id,
+            caregiver=request.user,
+        )
+        learning_goals = child.learning_goals
+        if not isinstance(learning_goals, list) or not learning_goals:
+            return Response(
+                {
+                    "error": (
+                        "Add at least one learning goal to this child profile "
+                        "before requesting recommendations."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         top_n = data.get("top_n", 5)
 
         try:
             recommendations = recommend_content(
-                age=age,
+                age=child.age_months,
                 learning_goals=learning_goals,
                 top_n=top_n,
             )
@@ -726,12 +781,219 @@ class ContentRecommendationView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        history = RecommendationHistory.objects.create(
+            caregiver=request.user,
+            child=child,
+            child_id_snapshot=child.pk,
+            child_name_snapshot=child.display_name,
+            age_months=child.age_months,
+            learning_goals=learning_goals,
+            recommendations=recommendations,
+        )
+
         return Response(
             {
                 "count": len(recommendations),
+                "history_id": history.pk,
+                "child": {
+                    "id": child.pk,
+                    "display_name": child.display_name,
+                    "age_months": child.age_months,
+                },
                 "recommendations": recommendations,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+def serialize_recommendation_history(history):
+    return {
+        "id": history.pk,
+        "child": {
+            "id": history.child_id_snapshot,
+            "display_name": history.child_name_snapshot,
+            "profile_deleted": history.child_id is None,
+        },
+        "age_months": history.age_months,
+        "learning_goals": history.learning_goals,
+        "recommendations": history.recommendations,
+        "feedback": {
+            "rating": history.feedback_rating,
+            "text": history.feedback_text,
+        },
+        "activities": [
+            {
+                "id": activity.pk,
+                "content_id": activity.content_id_snapshot,
+                "event_type": activity.event_type,
+                "details": activity.details,
+                "created_at": activity.created_at.isoformat(),
+            }
+            for activity in history.activities.all()
+        ],
+        "created_at": history.created_at.isoformat(),
+    }
+
+
+class RecommendationHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        queryset = (
+            RecommendationHistory.objects.filter(caregiver=request.user)
+            .select_related("child")
+            .prefetch_related("activities")
+        )
+
+        child_id = request.query_params.get("child_id")
+        if child_id:
+            try:
+                child_id = int(child_id)
+            except (TypeError, ValueError, OverflowError):
+                return Response(
+                    {"error": "child_id must be an integer."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not ChildProfile.objects.filter(
+                pk=child_id,
+                caregiver=request.user,
+            ).exists():
+                return Response(
+                    {"error": "Child profile not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            queryset = queryset.filter(child_id_snapshot=child_id)
+
+        return Response(
+            [serialize_recommendation_history(item) for item in queryset],
+            status=status.HTTP_200_OK,
+        )
+
+
+class RecommendationFeedbackView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, history_id):
+        history = get_object_or_404(
+            RecommendationHistory,
+            pk=history_id,
+            caregiver=request.user,
+        )
+        data = request.data
+        if not isinstance(data, dict):
+            return Response(
+                {"error": "Request body must be a JSON object."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw_rating = data.get("rating")
+        if isinstance(raw_rating, bool):
+            raw_rating = None
+        if isinstance(raw_rating, float) and not raw_rating.is_integer():
+            raw_rating = None
+        try:
+            rating = int(raw_rating)
+        except (TypeError, ValueError, OverflowError):
+            return Response(
+                {"error": "rating must be an integer from 1 to 5."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not 1 <= rating <= 5:
+            return Response(
+                {"error": "rating must be an integer from 1 to 5."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        feedback_text = data.get("text", "")
+        if not isinstance(feedback_text, str) or len(feedback_text) > 1000:
+            return Response(
+                {"error": "text must be a string of at most 1000 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        history.feedback_rating = rating
+        history.feedback_text = feedback_text.strip()
+        history.save(update_fields=["feedback_rating", "feedback_text"])
+        return Response(
+            serialize_recommendation_history(history),
+            status=status.HTTP_200_OK,
+        )
+
+
+class RecommendationActivityView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, history_id):
+        history = get_object_or_404(
+            RecommendationHistory,
+            pk=history_id,
+            caregiver=request.user,
+        )
+        data = request.data
+        if not isinstance(data, dict):
+            return Response(
+                {"error": "Request body must be a JSON object."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        event_type = data.get("event_type")
+        if event_type not in RecommendationActivity.EventType.values:
+            return Response(
+                {
+                    "error": "event_type must be viewed, clicked, saved, completed, or dismissed."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw_content_id = data.get("content_id")
+        if isinstance(raw_content_id, bool):
+            raw_content_id = None
+        try:
+            content_id = int(raw_content_id)
+        except (TypeError, ValueError, OverflowError):
+            return Response(
+                {"error": "Provide a valid content_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        recommended_ids = {
+            item.get("id")
+            for item in history.recommendations
+            if isinstance(item, dict)
+        }
+        if content_id not in recommended_ids:
+            return Response(
+                {"error": "That content was not in this recommendation result."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        details = data.get("details", {})
+        if not isinstance(details, dict):
+            return Response(
+                {"error": "details must be a JSON object."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content = Content.objects.filter(pk=content_id).first()
+        activity = RecommendationActivity.objects.create(
+            history=history,
+            content=content,
+            content_id_snapshot=content_id,
+            event_type=event_type,
+            details=details,
+        )
+        return Response(
+            {
+                "id": activity.pk,
+                "history_id": history.pk,
+                "content_id": activity.content_id_snapshot,
+                "event_type": activity.event_type,
+                "details": activity.details,
+                "created_at": activity.created_at.isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
         )
 
 
