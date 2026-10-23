@@ -5,6 +5,7 @@ import Sidebar from "../components/Sidebar";
 const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Recommendations", href: "/recommendations" },
+  { label: "Content Library", href: "/content-management" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },

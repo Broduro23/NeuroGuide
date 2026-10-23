@@ -2,6 +2,7 @@ import Link from "next/link";
 
 const defaultItems = [
   { label: "Home", href: "/" },
+  { label: "Content Library", href: "/content-management" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },

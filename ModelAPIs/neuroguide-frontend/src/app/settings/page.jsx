@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Navbar from "../../components/navbar";
 import Sidebar from "../../components/Sidebar";
+import { apiFetch, hasAccessToken } from "../../lib/api";
 
 const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Recommendations", href: "/recommendations" },
+  { label: "Content Library", href: "/content-management" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },
@@ -37,11 +40,69 @@ function Toggle({ name, label, defaultChecked = false }) {
 }
 
 export default function Settings() {
+  const router = useRouter();
   const [saved, setSaved] = useState(false);
+  const [account, setAccount] = useState({
+    username: "",
+    first_name: "",
+    last_name: "",
+    email: "",
+  });
+  const [childCount, setChildCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleSave(event) {
+  useEffect(() => {
+    let active = true;
+    if (!hasAccessToken()) {
+      router.replace("/login?next=/settings");
+      return () => {
+        active = false;
+      };
+    }
+
+    Promise.all([apiFetch("profile/"), apiFetch("children/")])
+      .then(([profile, children]) => {
+        if (!active) return;
+        setAccount(profile);
+        setChildCount(children.length);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError.message);
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [router]);
+
+  async function handleSave(event) {
     event.preventDefault();
-    setSaved(true);
+    setSaved(false);
+    setError("");
+    setIsSaving(true);
+    const formData = new FormData(event.currentTarget);
+
+    try {
+      const updatedProfile = await apiFetch("profile/", {
+        method: "PATCH",
+        body: JSON.stringify({
+          first_name: formData.get("firstName"),
+          last_name: formData.get("lastName"),
+          email: formData.get("email"),
+        }),
+      });
+      setAccount(updatedProfile);
+      setSaved(true);
+    } catch (saveError) {
+      setError(saveError.message);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -66,6 +127,9 @@ export default function Settings() {
               </h1>
             </div>
 
+            {isLoading ? (
+              <p className="py-10 text-center text-sm text-[#666]">Loading settings…</p>
+            ) : (
             <form onSubmit={handleSave} onChange={() => setSaved(false)} className="grid gap-5 pt-5 lg:grid-cols-[242px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <section className="rounded-lg border border-[#c5c5c5] bg-white p-4">
@@ -74,36 +138,28 @@ export default function Settings() {
                   </h2>
                   <div className="space-y-2.5">
                     <label className="flex items-center gap-2 text-xs">
-                      <span className="w-9 shrink-0">Name:</span>
-                      <input type="text" name="accountName" placeholder="Enter your name..." className={inputClasses} />
+                      <span className="w-12 shrink-0">First name:</span>
+                      <input type="text" name="firstName" value={account.first_name} onChange={(event) => setAccount((current) => ({ ...current, first_name: event.target.value }))} placeholder="First name" className={inputClasses} />
                     </label>
                     <label className="flex items-center gap-2 text-xs">
-                      <span className="w-9 shrink-0">Email:</span>
-                      <input type="email" name="email" placeholder="Enter your email address..." className={inputClasses} />
+                      <span className="w-12 shrink-0">Last name:</span>
+                      <input type="text" name="lastName" value={account.last_name} onChange={(event) => setAccount((current) => ({ ...current, last_name: event.target.value }))} placeholder="Last name" className={inputClasses} />
                     </label>
+                    <label className="flex items-center gap-2 text-xs">
+                      <span className="w-12 shrink-0">Email:</span>
+                      <input type="email" name="email" value={account.email} onChange={(event) => setAccount((current) => ({ ...current, email: event.target.value }))} placeholder="Email address" className={inputClasses} />
+                    </label>
+                    <p className="text-[10px] text-[#777]">Username: {account.username}</p>
                   </div>
 
-                  <details className="mt-3 text-center">
-                    <summary className="cursor-pointer list-none text-xs font-semibold hover:underline focus-visible:outline-2 focus-visible:outline-[#454545]">
-                      Change Password
-                    </summary>
-                    <div className="mt-3 space-y-2 text-left">
-                      <label className="block text-[10px] text-[#555]">
-                        Current password
-                        <input type="password" name="currentPassword" autoComplete="current-password" className={`${inputClasses} mt-1 w-full`} />
-                      </label>
-                      <label className="block text-[10px] text-[#555]">
-                        New password
-                        <input type="password" name="newPassword" autoComplete="new-password" className={`${inputClasses} mt-1 w-full`} />
-                      </label>
-                    </div>
-                  </details>
+                  <p className="mt-3 text-[10px] text-[#777]">Password changes are not available through the current API.</p>
                 </section>
 
                 <section className="rounded-lg border border-[#c5c5c5] bg-white p-4">
                   <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wide">
                     Notification Preferences
                   </h2>
+                  <p className="mb-3 text-[10px] text-[#777]">Preview only: notification preferences are not stored by the API yet.</p>
                   <div className="space-y-2.5 text-xs">
                     {[
                       "Learning Progress Updates",
@@ -133,6 +189,7 @@ export default function Settings() {
                   <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wide">
                     Privacy &amp; Data Sharing
                   </h2>
+                  <p className="mb-2 text-[10px] text-[#777]">These controls are not connected to a backend setting yet.</p>
                   <label className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e1e1e1] py-3 text-xs">
                     <span>Profile Visibility</span>
                     <select name="profileVisibility" defaultValue="Selected Caregivers" className="rounded-sm border border-[#d0d0d0] bg-white px-2 py-1.5 text-xs font-semibold text-[#444] outline-none focus:border-[#666] focus:ring-2 focus:ring-[#666]/20">
@@ -147,36 +204,36 @@ export default function Settings() {
 
                 <section aria-label="Account plan summary" className="grid gap-3 sm:grid-cols-3">
                   <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white p-3 text-center">
-                    <p className="text-sm">Premium Plan</p>
-                    <p className="mt-0.5 text-[10px] text-[#777]">[tier]</p>
-                    <button type="button" disabled title="Plan management is not connected yet" className="mt-2 rounded-md border border-[#bdbdbd] bg-[#e5e5e5] px-3 py-1.5 text-[10px] text-[#777] disabled:cursor-not-allowed">
-                      Manage Plan
-                    </button>
+                    <p className="text-sm">Plan &amp; Billing</p>
+                    <p className="mt-1 text-[10px] text-[#777]">No billing endpoint available</p>
                   </div>
                   <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white p-3 text-center">
-                    <p className="text-sm">Active Profiles: <strong>3</strong></p>
+                    <p className="text-sm">Child Profiles: <strong>{childCount}</strong></p>
                     <a href="/profile" className="mt-3 rounded-md border border-[#bdbdbd] bg-[#e5e5e5] px-3 py-1.5 text-[10px] text-[#444] no-underline hover:bg-[#d8d8d8]">
                       View Profiles
                     </a>
                   </div>
                   <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white p-3 text-center">
-                    <p className="text-sm">Billing Date: <strong>Jan 15</strong></p>
-                    <button type="button" disabled title="Billing is not connected yet" className="mt-3 rounded-md border border-[#bdbdbd] bg-[#e5e5e5] px-3 py-1.5 text-[10px] text-[#777] disabled:cursor-not-allowed">
-                      View Invoice
-                    </button>
+                    <p className="text-sm">Recommendation History</p>
+                    <p className="mt-1 text-[10px] text-[#777]">Available in the API</p>
+                    <a href="/recommendations" className="mt-2 rounded-md border border-[#bdbdbd] bg-[#e5e5e5] px-3 py-1.5 text-[10px] text-[#444] no-underline hover:bg-[#d8d8d8]">
+                      View Recommendations
+                    </a>
                   </div>
                 </section>
 
                 <div className="flex flex-col items-start gap-2">
-                  <button type="submit" className="min-h-10 w-full max-w-[280px] rounded-md border border-[#aaa] bg-[#d2d2d2] px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#333] transition hover:bg-[#c5c5c5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#454545]">
-                    Save Changes
+                  <button type="submit" disabled={isSaving} className="min-h-10 w-full max-w-[280px] rounded-md border border-[#aaa] bg-[#d2d2d2] px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#333] transition hover:bg-[#c5c5c5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#454545] disabled:cursor-wait disabled:opacity-60">
+                    {isSaving ? "Saving…" : "Save Account Details"}
                   </button>
                   <p aria-live="polite" className="min-h-4 text-xs text-[#666]">
-                    {saved ? "Settings saved for this session." : " "}
+                    {saved ? "Account details saved." : " "}
                   </p>
+                  {error ? <p role="alert" className="text-xs text-red-700">{error}</p> : null}
                 </div>
               </div>
             </form>
+            )}
           </div>
         </main>
       </div>

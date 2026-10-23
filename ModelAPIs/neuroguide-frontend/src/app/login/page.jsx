@@ -1,8 +1,46 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Navbar from "../../components/navbar";
 import Sidebar from "../../components/Sidebar";
+import { apiFetch, saveTokens } from "../../lib/api";
 
 export default function Login() {
+  const router = useRouter();
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    try {
+      const tokens = await apiFetch("login/", {
+        method: "POST",
+        auth: false,
+        body: JSON.stringify({
+          username: formData.get("username"),
+          password: formData.get("password"),
+        }),
+      });
+      saveTokens(tokens);
+      const requestedPath = new URLSearchParams(window.location.search).get("next");
+      const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//")
+        ? requestedPath
+        : "/";
+      router.replace(nextPath);
+      router.refresh();
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#292929]">
       <Navbar />
@@ -19,7 +57,7 @@ export default function Login() {
               </p>
             </div>
 
-            <form className="space-y-5">
+            <form className="space-y-5" onSubmit={handleSubmit}>
               <div className="space-y-1.5">
                 <label
                   htmlFor="username"
@@ -56,10 +94,16 @@ export default function Login() {
 
               <button
                 type="submit"
+                disabled={isSubmitting}
                 className="w-full rounded-md border border-[#333] bg-[#333] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#4a4a4a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#454545]"
               >
-                Sign in
+                  {isSubmitting ? "Signing in…" : "Sign in"}
               </button>
+              {error ? (
+                <p role="alert" className="text-sm text-red-700">
+                  {error}
+                </p>
+              ) : null}
             </form>
 
             <p className="mt-6 text-center text-sm text-[#666]">
