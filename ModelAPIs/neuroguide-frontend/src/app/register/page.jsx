@@ -40,17 +40,17 @@ export default function Register() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#292929]">
+    <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />
 
       <div className="flex flex-1 flex-col sm:flex-row">
         <Sidebar />
 
         <main className="flex min-w-0 flex-1 items-center justify-center px-4 py-10 sm:px-8">
-          <section className="w-full max-w-md rounded-xl border border-[#c5c5c5] bg-white p-6 sm:p-8">
+          <section className="w-full max-w-md rounded-xl border border-[#c9dadd] bg-white p-6 sm:p-8">
             <div className="mb-7 text-center">
               <h1 className="text-2xl font-bold tracking-wide">Create your account</h1>
-              <p className="mt-2 text-sm text-[#666]">
+              <p className="mt-2 text-sm text-[#536c73]">
                 Get started with NeuroGuide.
               </p>
             </div>
@@ -59,7 +59,7 @@ export default function Register() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="username"
-                  className="block text-sm font-semibold text-[#383838]"
+                  className="block text-sm font-semibold text-[#304b54]"
                 >
                   Username
                 </label>
@@ -69,14 +69,14 @@ export default function Register() {
                   name="username"
                   autoComplete="username"
                   required
-                  className="w-full rounded-md border border-[#bdbdbd] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#666] focus:ring-2 focus:ring-[#666]/20"
+                  className="w-full rounded-md border border-[#b6ccd1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label
                   htmlFor="email"
-                  className="block text-sm font-semibold text-[#383838]"
+                  className="block text-sm font-semibold text-[#304b54]"
                 >
                   Email
                 </label>
@@ -86,14 +86,14 @@ export default function Register() {
                   name="email"
                   autoComplete="email"
                   required
-                  className="w-full rounded-md border border-[#bdbdbd] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#666] focus:ring-2 focus:ring-[#666]/20"
+                  className="w-full rounded-md border border-[#b6ccd1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label
                   htmlFor="password"
-                  className="block text-sm font-semibold text-[#383838]"
+                  className="block text-sm font-semibold text-[#304b54]"
                 >
                   Password
                 </label>
@@ -103,14 +103,14 @@ export default function Register() {
                   name="password"
                   autoComplete="new-password"
                   required
-                  className="w-full rounded-md border border-[#bdbdbd] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#666] focus:ring-2 focus:ring-[#666]/20"
+                  className="w-full rounded-md border border-[#b6ccd1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label
                   htmlFor="confirm-password"
-                  className="block text-sm font-semibold text-[#383838]"
+                  className="block text-sm font-semibold text-[#304b54]"
                 >
                   Confirm password
                 </label>
@@ -120,14 +120,14 @@ export default function Register() {
                   name="password2"
                   autoComplete="new-password"
                   required
-                  className="w-full rounded-md border border-[#bdbdbd] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#666] focus:ring-2 focus:ring-[#666]/20"
+                  className="w-full rounded-md border border-[#b6ccd1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="mt-2 w-full rounded-md border border-[#333] bg-[#333] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#4a4a4a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#454545]"
+                className="mt-2 w-full rounded-md border border-[#176b5b] bg-[#176b5b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#115648] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71]"
               >
                 {isSubmitting ? "Creating account…" : "Create account"}
               </button>
@@ -143,11 +143,11 @@ export default function Register() {
               ) : null}
             </form>
 
-            <p className="mt-6 text-center text-sm text-[#666]">
+            <p className="mt-6 text-center text-sm text-[#536c73]">
               Already have an account?{" "}
               <Link
                 href="/login"
-                className="font-semibold text-[#292929] underline underline-offset-4 hover:text-[#666]"
+                className="font-semibold text-[#183940] underline underline-offset-4 hover:text-[#536c73]"
               >
                 Sign in
               </Link>

@@ -5,6 +5,9 @@ const nextConfig = {
   skipTrailingSlashRedirect: true,
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    proxyClientMaxBodySize: "100mb",
+  },
   turbopack: {
     rules: {
       "*.css": {
@@ -19,6 +22,10 @@ const nextConfig = {
     ).replace(/\/$/, "");
 
     return [
+      {
+        source: "/media/:path*",
+        destination: `${apiBaseUrl}/media/:path*`,
+      },
       {
         source: "/api/:path*",
         // Next's catch-all rewrite can drop the matched trailing slash.

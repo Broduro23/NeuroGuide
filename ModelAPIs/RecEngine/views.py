@@ -8,6 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RegisterSerializer, UserProfileSerializer, ChildProfileSerializer
 from django.db import transaction
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from .models import (
     ChildProfile,
@@ -15,8 +16,6 @@ from .models import (
     RecommendationActivity,
     RecommendationHistory,
 )
-from .dev_assessment import predict_developmental_probabilities
-from .safety_api import predict_safety
 from .recommendation_engine import recommend_content
 
 import logging
@@ -106,6 +105,8 @@ class DevelopmentalPredictionView(APIView):
             )
 
         try:
+            from .dev_assessment import predict_developmental_probabilities
+
             probabilities = predict_developmental_probabilities(text)
 
             # Use a configurable threshold for predicted labels.
@@ -186,6 +187,8 @@ class SafetyPredictionView(APIView):
             )
 
         try:
+            from .safety_api import predict_safety
+
             result, confidence = predict_safety(text)
 
             return Response(
@@ -213,13 +216,20 @@ def serialize_content(content):
         "text": content.text,
         "source_filename": content.source_filename,
         "content_type": content.content_type,
+        "media_file": content.media_file.name if content.media_file else None,
+        "media_file_url": content.media_file.url if content.media_file else None,
+        "transcript": content.transcript,
+        "media_duration_seconds": content.media_duration_seconds,
         "age_min": content.age_min,
         "age_max": content.age_max,
         "safety_label": content.safety_label,
         "safety_confidence": content.safety_confidence,
         "safety_assessment": content.safety_assessment,
+        "visual_assessment": content.visual_assessment,
+        "audio_assessment": content.audio_assessment,
         "developmental_scores": content.developmental_scores,
         "assessment_status": content.assessment_status,
+        "processing_status": content.processing_status,
         "recommendation_eligible": content.recommendation_eligible,
         "created_at": content.created_at.isoformat(),
         "updated_at": content.updated_at.isoformat(),
@@ -371,6 +381,9 @@ def normalize_developmental_result(result):
 
 def assess_content_record(content):
     """Run safety and developmental assessment and persist the results."""
+    from .dev_assessment import predict_developmental_probabilities
+    from .safety_api import predict_safety
+
     content.safety_label = Content.SafetyStatus.PENDING
     content.safety_confidence = None
     content.safety_assessment = {}
@@ -460,11 +473,47 @@ class RecommendationView(APIView):
         assessment when the safety policy permits it.
         """
 
-        text, filename, error = extract_content_text(request)
+        content_type = str(request.data.get('content_type', 'text')).lower()
+        upload = request.FILES.get('media_file') or request.FILES.get('file')
+        text = ''
+        filename = ''
 
-        if error:
+        if content_type == Content.ContentType.TEXT:
+            text, filename, error = extract_content_text(request)
+            if error:
+                return Response(
+                    {"error": error},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif content_type in {
+            Content.ContentType.VIDEO,
+            Content.ContentType.AUDIO,
+        }:
+            if upload is None:
+                return Response(
+                    {"error": "Upload the media using the 'media_file' field."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if upload.size > settings.MEDIA_MAX_UPLOAD_BYTES:
+                return Response(
+                    {"error": "Media upload exceeds the configured size limit."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            extension = upload.name.rsplit('.', 1)[-1].lower() if '.' in upload.name else ''
+            allowed = (
+                {'mp4', 'mov', 'mkv', 'webm', 'avi', 'mpeg', 'mpg'}
+                if content_type == Content.ContentType.VIDEO
+                else {'mp3', 'wav', 'm4a', 'ogg', 'flac', 'webm', 'mpeg', 'mpga'}
+            )
+            if extension not in allowed:
+                return Response(
+                    {"error": f"Unsupported {content_type} file extension."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            filename = upload.name
+        else:
             return Response(
-                {"error": error},
+                {"error": "content_type must be text, audio, or video."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -499,14 +548,13 @@ class RecommendationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        content_type = request.data.get("content_type", "text")
-
         # Persist the submission before running expensive ML inference.
         content = Content.objects.create(
             title=title,
             text=text,
             source_filename=filename,
             content_type=content_type,
+            media_file=upload if content_type != Content.ContentType.TEXT else None,
             age_min=age_min,
             age_max=age_max,
             safety_label=Content.SafetyStatus.PENDING,
@@ -514,6 +562,41 @@ class RecommendationView(APIView):
             recommendation_eligible=False,
             created_by=request.user,
         )
+
+        if content_type in {
+            Content.ContentType.VIDEO,
+            Content.ContentType.AUDIO,
+        }:
+            from .tasks import assess_media_content
+
+            content.processing_status = Content.ProcessingStatus.PENDING
+            content.save(update_fields=['processing_status', 'updated_at'])
+            try:
+                assess_media_content.delay(content.pk)
+            except Exception:
+                logger.exception('Could not enqueue media assessment %s', content.pk)
+                content.processing_status = Content.ProcessingStatus.FAILED
+                content.assessment_status = Content.AssessmentStatus.FAILED
+                content.safety_label = Content.SafetyStatus.INCONCLUSIVE
+                content.safety_assessment = {
+                    'error': 'Media assessment could not be queued.'
+                }
+                content.save()
+                return Response(
+                    {
+                        'error': 'Media was saved but could not be queued for assessment.',
+                        'content_id': content.pk,
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            return Response(
+                {
+                    'message': 'Media uploaded and queued for assessment.',
+                    'content': serialize_content(content),
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         try:
             assess_content_record(content)
@@ -693,6 +776,42 @@ class ContentAssessmentView(APIView):
     def post(self, request, content_id):
         content = get_object_or_404(Content, pk=content_id)
 
+        if content.content_type in {
+            Content.ContentType.VIDEO,
+            Content.ContentType.AUDIO,
+        }:
+            from .tasks import assess_media_content
+
+            content.safety_label = Content.SafetyStatus.PENDING
+            content.assessment_status = Content.AssessmentStatus.PENDING
+            content.processing_status = Content.ProcessingStatus.PENDING
+            content.recommendation_eligible = False
+            content.save()
+            try:
+                assess_media_content.delay(content.pk)
+            except Exception:
+                logger.exception(
+                    'Could not enqueue media reassessment %s', content.pk
+                )
+                content.processing_status = Content.ProcessingStatus.FAILED
+                content.assessment_status = Content.AssessmentStatus.FAILED
+                content.safety_label = Content.SafetyStatus.INCONCLUSIVE
+                content.safety_assessment = {
+                    'error': 'Media reassessment could not be queued.'
+                }
+                content.save()
+                return Response(
+                    {'error': 'Media could not be queued for reassessment.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            return Response(
+                {
+                    'message': 'Media reassessment queued.',
+                    'content': serialize_content(content),
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
         try:
             assess_content_record(content)
         except Exception:
@@ -807,6 +926,32 @@ class ContentRecommendationView(APIView):
 
 
 def serialize_recommendation_history(history):
+    stored_recommendations = (
+        history.recommendations
+        if isinstance(history.recommendations, list)
+        else []
+    )
+    recommendation_ids = [
+        item.get("id")
+        for item in stored_recommendations
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), int)
+        and not isinstance(item.get("id"), bool)
+    ]
+    currently_eligible_ids = set(
+        Content.objects.filter(
+            pk__in=recommendation_ids,
+            safety_label=Content.SafetyStatus.SAFE,
+            assessment_status=Content.AssessmentStatus.COMPLETED,
+            recommendation_eligible=True,
+        ).values_list("pk", flat=True)
+    )
+    safe_recommendations = [
+        item
+        for item in stored_recommendations
+        if isinstance(item, dict) and item.get("id") in currently_eligible_ids
+    ]
+
     return {
         "id": history.pk,
         "child": {
@@ -816,7 +961,7 @@ def serialize_recommendation_history(history):
         },
         "age_months": history.age_months,
         "learning_goals": history.learning_goals,
-        "recommendations": history.recommendations,
+        "recommendations": safe_recommendations,
         "feedback": {
             "rating": history.feedback_rating,
             "text": history.feedback_text,
@@ -977,6 +1122,11 @@ class RecommendationActivityView(APIView):
             )
 
         content = Content.objects.filter(pk=content_id).first()
+        if content is None or content.safety_label != Content.SafetyStatus.SAFE:
+            return Response(
+                {"error": "Activities must pass safety review before they can be opened."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         activity = RecommendationActivity.objects.create(
             history=history,
             content=content,

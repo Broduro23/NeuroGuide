@@ -25,8 +25,16 @@ SECRET_KEY = 'django-insecure--4ye-5kqby62$*68mt!ous2)!wz9&s$523_sx#^gw%e%cm-13&
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
+APPEND_SLASH = False
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        "DJANGO_ALLOWED_HOSTS",
+        "localhost,127.0.0.1,neuroguide-api",
+    ).split(",")
+    if host.strip()
+]
 
 
 # Application definition
@@ -123,6 +131,44 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+
+MEDIA_ROOT = Path(os.getenv('MEDIA_ROOT', BASE_DIR / 'media'))
+MEDIA_URL = '/media/'
+
+# Keep large multipart uploads spooled to disk instead of holding them in RAM.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2_500_000
+
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = None
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+HF_TOKEN = os.getenv('HF_TOKEN', '')
+HF_NSFW_MODEL = os.getenv(
+    'HF_NSFW_MODEL', 'Falconsai/nsfw_image_detection'
+)
+HF_NSFW_MODEL_PATH = os.getenv(
+    'HF_NSFW_MODEL_PATH', str(BASE_DIR / 'model_cache' / 'nsfw_image_detection')
+)
+HF_NSFW_THRESHOLD = float(os.getenv('HF_NSFW_THRESHOLD', '0.5'))
+MEDIA_NSFW_MIN_FLAGGED_FRAMES = int(
+    os.getenv('MEDIA_NSFW_MIN_FLAGGED_FRAMES', '2')
+)
+WHISPER_MODEL_SIZE = os.getenv('WHISPER_MODEL_SIZE', 'tiny')
+WHISPER_COMPUTE_TYPE = os.getenv('WHISPER_COMPUTE_TYPE', 'int8')
+WHISPER_CPU_THREADS = int(os.getenv('WHISPER_CPU_THREADS', '2'))
+WHISPER_BEAM_SIZE = int(os.getenv('WHISPER_BEAM_SIZE', '1'))
+WHISPER_DOWNLOAD_ROOT = os.getenv(
+    'WHISPER_DOWNLOAD_ROOT', str(BASE_DIR / '.cache' / 'whisper')
+)
+MEDIA_MAX_UPLOAD_BYTES = int(
+    os.getenv('MEDIA_MAX_UPLOAD_BYTES', str(100 * 1024 * 1024))
+)
+MEDIA_MAX_DURATION_SECONDS = int(os.getenv('MEDIA_MAX_DURATION_SECONDS', '600'))
+MEDIA_FRAME_INTERVAL_SECONDS = float(
+    os.getenv('MEDIA_FRAME_INTERVAL_SECONDS', '5')
+)
+MEDIA_MAX_FRAMES = int(os.getenv('MEDIA_MAX_FRAMES', '60'))
 
 
 # Email

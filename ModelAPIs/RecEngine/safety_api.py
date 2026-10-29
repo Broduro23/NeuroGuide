@@ -49,3 +49,28 @@ def predict_safety(text):
     labels = ["Safe", "Unsafe"]
     return labels[predicted_class], confidence
 
+
+def predict_safety_for_full_text(text):
+    """Check every transcript token despite the model's 128-token limit."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Text cannot be empty.")
+
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    chunk_size = 126
+    step_size = 96
+    confidences = []
+
+    for offset in range(0, len(token_ids), step_size):
+        chunk = tokenizer.decode(
+            token_ids[offset:offset + chunk_size],
+            skip_special_tokens=True,
+        )
+        label, confidence = predict_safety(chunk)
+        if label.strip().lower() == "unsafe":
+            return "Unsafe", confidence
+        if label.strip().lower() != "safe":
+            raise ValueError("Safety model returned an unknown label.")
+        confidences.append(confidence)
+
+    return "Safe", min(confidences, default=0.0)
+

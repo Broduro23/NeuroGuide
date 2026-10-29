@@ -11,6 +11,7 @@ const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Recommendations", href: "/recommendations" },
   { label: "Content Library", href: "/content-management" },
+  { label: "Media Testing", href: "/media-testing" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },
@@ -59,7 +60,7 @@ const emptyForm = {
 };
 
 const inputClasses =
-  "min-w-0 rounded-md border border-[#bdbdbd] bg-white px-3 py-2 text-sm text-[#333] outline-none focus:border-[#666] focus:ring-2 focus:ring-[#666]/20";
+  "min-w-0 rounded-md border border-[#b6ccd1] bg-white px-3 py-2 text-sm text-[#176b5b] outline-none focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20";
 
 function profileToForm(profile) {
   if (!profile) return emptyForm;
@@ -224,7 +225,7 @@ export default function Profile() {
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#292929]">
+    <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />
 
       <div className="flex flex-1 flex-col sm:flex-row">
@@ -232,10 +233,10 @@ export default function Profile() {
 
         <main className="min-w-0 flex-1 px-4 pb-10 sm:px-8">
           <div className="mx-auto max-w-5xl">
-            <div className="flex min-h-14 flex-wrap items-center gap-3 border-b border-[#d0d0d0] py-2">
+            <div className="flex min-h-14 flex-wrap items-center gap-3 border-b border-[#c9dadd] py-2">
               <Link
                 href="/"
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[#bdbdbd] bg-[#e4e4e4] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[#333] no-underline hover:bg-[#d8d8d8]"
+                className="inline-flex items-center gap-1.5 rounded-sm border border-[#b6ccd1] bg-[#e7f0f2] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[#176b5b] no-underline hover:bg-[#dbe9eb]"
               >
                 ‹ &nbsp; Back
               </Link>
@@ -248,7 +249,7 @@ export default function Profile() {
                     aria-label="Choose child profile"
                     value={selectedChildId}
                     onChange={(event) => selectChild(event.target.value)}
-                    className="max-w-40 rounded-sm border border-[#bdbdbd] bg-white px-2 py-1.5 text-xs"
+                    className="max-w-40 rounded-sm border border-[#b6ccd1] bg-white px-2 py-1.5 text-xs"
                   >
                     {children.map((child) => (
                       <option key={child.id} value={String(child.id)}>
@@ -261,7 +262,7 @@ export default function Profile() {
                 <button
                   type="button"
                   onClick={startNewProfile}
-                  className="rounded-sm border border-[#bdbdbd] bg-white px-2.5 py-1.5 text-xs hover:bg-[#f4f4f4]"
+                  className="rounded-sm border border-[#b6ccd1] bg-white px-2.5 py-1.5 text-xs hover:bg-[#eef5f5]"
                 >
                   Add child
                 </button>
@@ -269,7 +270,7 @@ export default function Profile() {
             </div>
 
             {isLoading ? (
-              <p className="py-10 text-center text-sm text-[#666]">Loading child profiles…</p>
+              <p className="py-10 text-center text-sm text-[#536c73]">Loading child profiles…</p>
             ) : (
               <form onSubmit={handleSave} onChange={() => setSaved(false)}>
                 <div className="grid gap-6 pt-5 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-7">
@@ -277,20 +278,20 @@ export default function Profile() {
                     <div className="flex flex-col items-center">
                       <div
                         aria-hidden="true"
-                        className="relative flex aspect-square w-28 items-center justify-center overflow-hidden border border-[#aaa] bg-[#dedede] text-[9px] uppercase text-[#888] sm:w-32"
+                        className="relative flex aspect-square w-28 items-center justify-center overflow-hidden border border-[#94aab0] bg-[#dbe9eb] text-[9px] uppercase text-[#536c73] sm:w-32"
                       >
-                        <span className="absolute left-[-8%] top-1/2 h-px w-[116%] -rotate-45 bg-[#b0b0b0]" />
-                        <span className="absolute left-[-8%] top-1/2 h-px w-[116%] rotate-45 bg-[#b0b0b0]" />
-                        <span className="relative bg-[#dedede]/70 px-1">Photo</span>
+                        <span className="absolute left-[-8%] top-1/2 h-px w-[116%] -rotate-45 bg-[#94aab0]" />
+                        <span className="absolute left-[-8%] top-1/2 h-px w-[116%] rotate-45 bg-[#94aab0]" />
+                        <span className="relative bg-[#dbe9eb]/70 px-1">Photo</span>
                       </div>
                       <h2 className="mt-2 text-sm font-bold uppercase tracking-[0.08em]">
                         {form.display_name || "Child Name"}
                       </h2>
                     </div>
 
-                    <fieldset className="rounded-lg border border-[#c5c5c5] bg-white p-3.5">
+                    <fieldset className="rounded-lg border border-[#c9dadd] bg-white p-3.5">
                       <legend className="sr-only">Basic information</legend>
-                      <p className="mb-3 text-[11px] font-semibold text-[#444]">
+                      <p className="mb-3 text-[11px] font-semibold text-[#36535b]">
                         Basic Information
                       </p>
                       <div className="space-y-3 text-xs">
@@ -328,7 +329,7 @@ export default function Profile() {
                               }
                               className={`${inputClasses} w-20`}
                             />
-                            <span className="text-[#666]">months</span>
+                            <span className="text-[#536c73]">months</span>
                           </span>
                         </label>
                         <fieldset>
@@ -340,7 +341,7 @@ export default function Profile() {
                                   type="checkbox"
                                   checked={form.interests.includes(interest)}
                                   onChange={() => toggleValue("interests", interest)}
-                                  className="size-3.5 accent-[#666]"
+                                  className="size-3.5 accent-[#536c73]"
                                 />
                                 {interest}
                               </label>
@@ -367,21 +368,21 @@ export default function Profile() {
                   </section>
 
                   <section aria-label="Learning goals and activity history" className="space-y-4">
-                    <div className="rounded-lg border border-[#c5c5c5] bg-white p-4 sm:p-5">
+                    <div className="rounded-lg border border-[#c9dadd] bg-white p-4 sm:p-5">
                       <h2 className="mb-1 text-[11px] font-bold uppercase tracking-wide">
                         Developmental Learning Goals
                       </h2>
-                      <p className="mb-4 text-xs text-[#777]">
+                      <p className="mb-4 text-xs text-[#647d83]">
                         Choose the areas to use when finding activities.
                       </p>
                       <div className="grid gap-2 sm:grid-cols-2">
                         {learningGoals.map(([value, label]) => (
-                          <label key={value} className="flex items-center gap-2 text-xs text-[#4c4c4c]">
+                          <label key={value} className="flex items-center gap-2 text-xs text-[#36535b]">
                             <input
                               type="checkbox"
                               checked={form.learning_goals.includes(value)}
                               onChange={() => toggleValue("learning_goals", value)}
-                              className="size-3.5 accent-[#666]"
+                              className="size-3.5 accent-[#536c73]"
                             />
                             {label}
                           </label>
@@ -395,19 +396,19 @@ export default function Profile() {
                         { value: completedActivities, label: "Activities Completed" },
                         { value: form.learning_goals.length, label: "Learning Goals" },
                       ].map((stat) => (
-                        <div key={stat.label} className="flex min-h-16 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white px-2 py-3 text-center">
+                        <div key={stat.label} className="flex min-h-16 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white px-2 py-3 text-center">
                           <span className="text-base font-medium">{stat.value}</span>
-                          <span className="mt-1 text-[9px] text-[#777] sm:text-[10px]">{stat.label}</span>
+                          <span className="mt-1 text-[9px] text-[#647d83] sm:text-[10px]">{stat.label}</span>
                         </div>
                       ))}
                     </div>
 
                     {selectedChild ? (
-                      <div className="rounded-lg border border-[#c5c5c5] bg-white p-4">
+                      <div className="rounded-lg border border-[#c9dadd] bg-white p-4">
                         <h2 className="text-[11px] font-bold uppercase tracking-wide">Saved Learning Goals</h2>
                         <div className="mt-3 flex flex-wrap gap-2">
                           {selectedChild.learning_goals.map((goal) => (
-                            <span key={goal} className="rounded-full border border-[#c5c5c5] bg-[#f2f2f2] px-3 py-1 text-xs">
+                            <span key={goal} className="rounded-full border border-[#c9dadd] bg-[#edf4f5] px-3 py-1 text-xs">
                               {formatGoal(goal)}
                             </span>
                           ))}
@@ -419,7 +420,7 @@ export default function Profile() {
                       <button
                         type="submit"
                         disabled={isSaving}
-                        className="w-full max-w-[280px] rounded-md border border-[#aaa] bg-[#d2d2d2] px-5 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-[#333] transition hover:bg-[#c5c5c5] disabled:cursor-wait disabled:opacity-60"
+                        className="w-full max-w-[280px] rounded-md border border-[#94aab0] bg-[#c9dadd] px-5 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-[#176b5b] transition hover:bg-[#c9dadd] disabled:cursor-wait disabled:opacity-60"
                       >
                         {isSaving
                           ? "Saving…"
@@ -427,7 +428,7 @@ export default function Profile() {
                             ? "Save Profile"
                             : "Create Profile"}
                       </button>
-                      <p role="status" className="min-h-4 text-xs text-[#315d37]">
+                      <p role="status" className="min-h-4 text-xs text-[#176b4d]">
                         {saved ? "Profile saved." : " "}
                       </p>
                       {error ? <p role="alert" className="text-center text-xs text-red-700">{error}</p> : null}

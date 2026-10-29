@@ -11,6 +11,7 @@ const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Recommendations", href: "/recommendations" },
   { label: "Content Library", href: "/content-management" },
+  { label: "Media Testing", href: "/media-testing" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },
@@ -73,15 +74,15 @@ export default function Progress() {
   }, [history]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#292929]">
+    <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />
 
       <div className="flex flex-1 flex-col sm:flex-row">
         <Sidebar items={navigationItems} activeItem="Progress" />
 
         <main className="min-w-0 flex-1">
-          <div className="relative flex min-h-12 items-center justify-center border-b border-[#c9c9c9] bg-white px-16">
-            <Link href="/" className="absolute left-4 text-xs font-medium uppercase tracking-wide text-[#444] no-underline hover:text-black">
+          <div className="relative flex min-h-12 items-center justify-center border-b border-[#c9dadd] bg-white px-16">
+            <Link href="/" className="absolute left-4 text-xs font-medium uppercase tracking-wide text-[#36535b] no-underline hover:text-black">
               ‹ &nbsp; Back
             </Link>
             <h1 className="text-center text-xs font-bold uppercase tracking-[0.14em]">
@@ -91,11 +92,11 @@ export default function Progress() {
 
           <div className="mx-auto w-full max-w-5xl px-4 pb-10 pt-7 sm:px-8">
             {isLoading ? (
-              <p className="rounded-lg border border-[#c5c5c5] bg-white p-6 text-center text-sm text-[#666]">
+              <p className="rounded-lg border border-[#c9dadd] bg-white p-6 text-center text-sm text-[#536c73]">
                 Loading progress…
               </p>
             ) : error ? (
-              <p role="alert" className="rounded-lg border border-[#c5c5c5] bg-white p-6 text-center text-sm text-red-700">
+              <p role="alert" className="rounded-lg border border-[#c9dadd] bg-white p-6 text-center text-sm text-red-700">
                 {error}
               </p>
             ) : (
@@ -106,9 +107,9 @@ export default function Progress() {
                     { value: totals.viewed, label: "Activities Viewed" },
                     { value: totals.completed, label: "Activities Completed" },
                   ].map((stat) => (
-                    <div key={stat.label} className="rounded-lg border border-[#c5c5c5] bg-white p-4 text-center">
+                    <div key={stat.label} className="rounded-lg border border-[#c9dadd] bg-white p-4 text-center">
                       <p className="text-2xl font-bold">{stat.value}</p>
-                      <p className="mt-1 text-xs text-[#777]">{stat.label}</p>
+                      <p className="mt-1 text-xs text-[#647d83]">{stat.label}</p>
                     </div>
                   ))}
                 </section>
@@ -116,22 +117,22 @@ export default function Progress() {
                 <section aria-labelledby="history-title" className="mt-7">
                   <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#777]">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#647d83]">
                         Recorded from your recommendations
                       </p>
                       <h2 id="history-title" className="mt-1 text-xl font-bold">
                         Activity history
                       </h2>
                     </div>
-                    <Link href="/recommendations" className="rounded-md border border-[#333] bg-[#333] px-4 py-2 text-xs font-semibold text-white no-underline hover:bg-[#4a4a4a]">
+                    <Link href="/recommendations" className="rounded-md border border-[#176b5b] bg-[#176b5b] px-4 py-2 text-xs font-semibold text-white no-underline hover:bg-[#115648]">
                       Find activities
                     </Link>
                   </div>
 
                   {history.length === 0 ? (
-                    <div className="rounded-xl border border-[#c5c5c5] bg-white p-8 text-center">
-                      <p className="text-sm text-[#555]">No activity history yet.</p>
-                      <p className="mt-2 text-xs text-[#777]">Request recommendations and open an activity to start building a history.</p>
+                    <div className="rounded-xl border border-[#c9dadd] bg-white p-8 text-center">
+                      <p className="text-sm text-[#445f67]">No activity history yet.</p>
+                      <p className="mt-2 text-xs text-[#647d83]">Request recommendations and open an activity to start building a history.</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -144,36 +145,36 @@ export default function Progress() {
                         );
 
                         return (
-                          <article key={session.id} className="rounded-xl border border-[#c5c5c5] bg-white p-4 sm:p-5">
-                            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#e1e1e1] pb-3">
+                          <article key={session.id} className="rounded-xl border border-[#c9dadd] bg-white p-4 sm:p-5">
+                            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#d9e9e8] pb-3">
                               <div>
                                 <h3 className="font-bold">{session.child.display_name}</h3>
-                                <p className="mt-1 text-xs text-[#777]">
+                                <p className="mt-1 text-xs text-[#647d83]">
                                   Age {session.age_months} months · {session.learning_goals.join(", ")}
                                 </p>
                               </div>
-                              <time className="text-xs text-[#777]" dateTime={session.created_at}>
+                              <time className="text-xs text-[#647d83]" dateTime={session.created_at}>
                                 {formatDate(session.created_at)}
                               </time>
                             </div>
 
                             {session.recommendations.length > 0 ? (
-                              <ul className="mt-3 divide-y divide-[#eee]">
+                              <ul className="mt-3 divide-y divide-[#edf4f5]">
                                 {session.recommendations.map((item) => {
                                   const completed = completedIds.has(String(item.id));
                                   return (
                                     <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                                       <div>
                                         <p className="text-sm font-semibold">{item.title}</p>
-                                        <p className="mt-1 text-xs text-[#777]">
+                                        <p className="mt-1 text-xs text-[#647d83]">
                                           Match {Math.round(item.relevance_score * 100)}% · {item.matched_goals.join(", ")}
                                         </p>
                                       </div>
                                       <div className="flex items-center gap-3">
-                                        <span className={`text-xs font-semibold ${completed ? "text-[#315d37]" : "text-[#777]"}`}>
+                                        <span className={`text-xs font-semibold ${completed ? "text-[#176b4d]" : "text-[#647d83]"}`}>
                                           {completed ? "Completed" : "Not completed"}
                                         </span>
-                                        <Link href={activityHref(session.id, item.id)} className="rounded-md border border-[#bdbdbd] px-3 py-1.5 text-xs text-[#444] no-underline hover:bg-[#f3f3f3]">
+                                        <Link href={activityHref(session.id, item.id)} className="rounded-md border border-[#b6ccd1] px-3 py-1.5 text-xs text-[#36535b] no-underline hover:bg-[#eef5f5]">
                                           Open
                                         </Link>
                                       </div>
@@ -182,7 +183,7 @@ export default function Progress() {
                                 })}
                               </ul>
                             ) : (
-                              <p className="mt-3 text-xs text-[#777]">No matching activities were returned for this session.</p>
+                              <p className="mt-3 text-xs text-[#647d83]">No matching activities were returned for this session.</p>
                             )}
                           </article>
                         );

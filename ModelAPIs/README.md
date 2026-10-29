@@ -8,7 +8,7 @@ NeuroGuide Model APIs is a Django REST Framework backend for caregiver accounts,
 - Create and manage child profiles. Each caregiver can access only their own child profiles.
 - Classify text as safe or unsafe and return the model confidence.
 - Score text against 20 developmental domains and return probabilities and domains at or above a 0.5 threshold.
-- Submit learning content for safety and developmental assessment. Submissions are stored in PostgreSQL; only safe, fully assessed content is marked eligible for recommendations.
+- Submit text, audio, and video learning content for safety assessment. Text receives developmental scores; safe media is recommended as a general age-appropriate activity without developmental labels.
 - Manage the full content library: list and retrieve records, update or delete them, and rerun assessments.
 - Request ranked recommendations using a caregiver's saved child profile.
 - Persist recommendation history with a snapshot of the child, goals, and returned content; record views, clicks, saves, completions, dismissals, and caregiver feedback.
@@ -43,6 +43,10 @@ docker compose exec neuroguide-api python manage.py migrate
 
 On Linux systems where Docker requires elevated privileges, prefix these commands with `sudo`.
 
+The same Compose stack starts the Next.js frontend at <http://localhost:3000>, Redis, and one Celery media worker. The API and worker share the persistent `media_files` volume. The API image installs FFmpeg/ffprobe and Python dependencies from `requirements.txt`; the project and model files are supplied by the Compose bind mount. PyTorch is CPU-only. Frontend requests can use the `NEXT_PUBLIC_API_BASE_URL` value (`/api/ModelAPIs/RecEngine`); Next.js proxies those requests to Django using `API_INTERNAL_BASE_URL`, so browser requests stay same-origin.
+
+Video frame safety checks run locally with the Transformers image-classification pipeline. The worker downloads `HF_NSFW_MODEL` from Hugging Face on its first video assessment and stores a persistent copy in `./model_cache/nsfw_image_detection`, which is mounted into the worker at `/models/nsfw_image_detection`. The public default model does not require `HF_TOKEN`; set it only if the selected model requires authentication. A video is flagged by its sampled frames when at least `MEDIA_NSFW_MIN_FLAGGED_FRAMES` frames meet the `HF_NSFW_THRESHOLD` (default: two frames at 0.5). Audio transcription runs locally with open-source faster-whisper; its model downloads on first use and is cached in the `whisper_cache` Docker volume. The defaults use the multilingual `tiny` model with CPU INT8, two CPU threads, and beam size one. Set `WHISPER_MODEL_SIZE` to `base` or `small` for higher transcription accuracy at greater memory and latency cost. Media limits are configurable with `MEDIA_MAX_UPLOAD_BYTES`, `MEDIA_MAX_DURATION_SECONDS`, `MEDIA_FRAME_INTERVAL_SECONDS`, and `MEDIA_MAX_FRAMES`; visual model settings use `HF_NSFW_MODEL` and `HF_NSFW_THRESHOLD`. One worker processes one media job at a time; within a job, audio and visual checks run concurrently. Frames are sampled across the clip, increasing the interval if needed to stay within the frame cap. Brief scenes between sampled frames may still be missed.
+
 To remove the database volume and all stored database data, run `docker compose down -v`.
 
 ## Configuration and model files
@@ -58,7 +62,7 @@ The prediction modules expect these local files:
 - `models/dev_assessment/tokenizer_config.json`
 - `models/dev_assessment/dev_assessment.pth`
 
-Both modules initialize their tokenizer and model when Django imports the views. They also load the `bert-base-uncased` architecture through Transformers; it may need to be available in the Hugging Face cache or downloaded when the container starts. Missing or incompatible model files prevent prediction features from working and may prevent the API from starting.
+The API loads these models on first use of a text prediction or text assessment endpoint. The single media worker loads them when it starts. Both use the `bert-base-uncased` architecture through Transformers; it may need to be available in the Hugging Face cache or downloaded when the container starts. Missing or incompatible model files prevent prediction and media assessment from working.
 
 ## API base URL and authentication
 
@@ -95,7 +99,7 @@ For browser use, open a browsable API endpoint such as `/ModelAPIs/RecEngine/chi
 | `POST` | `/safety/predict/` | Public | Classify text as safe or unsafe and return confidence. |
 | `GET`, `POST` | `/content/` | JWT | List all stored content records or submit and assess new content. |
 | `GET`, `PATCH`, `DELETE` | `/content/<id>/` | JWT | Retrieve, update, or delete a content record. Changes to text or age range reset assessment results and eligibility. |
-| `POST` | `/content/<id>/assess/` | JWT | Rerun safety and, when safe, developmental assessments for a stored record. |
+| `POST` | `/content/<id>/assess/` | JWT | Rerun safety assessment; developmental scoring applies to text content. |
 | `POST` | `/recommend/` | JWT | Generate recommendations for one of the caregiver's saved child profiles and record the result in history. |
 | `GET` | `/recommend/history/` | JWT | List the caregiver's recommendation history; optionally filter with `?child_id=<id>`. |
 | `POST` | `/recommend/history/<history_id>/feedback/` | JWT | Add or update a 1–5 rating and optional text feedback for a result. |
@@ -175,17 +179,31 @@ Send an authenticated JSON `POST /content/` request with `text` or upload a `.tx
   "text": "Count objects together and name each number.",
   "age_min": 24,
   "age_max": 48,
-  "content_type": "activity"
+  "content_type": "text"
 }
 ```
 
 The API checks safety first. Developmental scoring runs only when content is classified as safe. Content is recommendation-eligible only after both assessments complete successfully. Content text is limited to 100,000 characters; uploaded files are limited to 2 MB and must be UTF-8 `.txt` files.
 
+Audio and video are submitted as multipart uploads using the `media_file` field and `content_type=audio` or `content_type=video`. They return `202 Accepted` while the single worker probes the media, transcribes speech locally with faster-whisper, checks transcript safety with the existing BERT model, and checks sampled video frames with the local Falconsai NSFW image classifier. If any checked frame or transcript is unsafe, the content is marked unsafe and remains ineligible. A processing or model-download failure is marked inconclusive/failed and remains ineligible. Poll `GET /content/<id>/` for `processing_status`, `safety_label`, `visual_assessment`, `audio_assessment`, and `transcript`.
+
+Example video upload:
+
+```sh
+curl http://localhost:8000/ModelAPIs/RecEngine/content/ \
+  -H 'Authorization: Bearer <access-token>' \
+  -F 'title=Learning video' \
+  -F 'age_min=24' \
+  -F 'age_max=48' \
+  -F 'content_type=video' \
+  -F 'media_file=@learning-video.mp4'
+```
+
 ### Manage stored content
 
 All content-management requests require a JWT access token. `GET /content/` lists records, including pending, unsafe, and failed assessments. `GET /content/<id>/` retrieves one record. `PATCH /content/<id>/` can update `title`, `text`, `age_min`, `age_max`, and `content_type`; changing the text or age range clears previous assessment results and makes the item ineligible until reassessed. `DELETE /content/<id>/` removes the record.
 
-To rerun the assessments, send an authenticated empty `POST` to `/content/<id>/assess/`. The safety model runs first. If it marks the content safe, the developmental model runs next and successful scores are saved. Unsafe or inconclusive records remain stored but are not eligible for recommendations.
+To rerun assessment, send an authenticated empty `POST` to `/content/<id>/assess/`. Text is checked for safety and then receives developmental scores. Audio and video receive safety checks only; safe media is offered as a general age-appropriate recommendation without developmental labels. Unsafe or inconclusive records remain stored but are not eligible for recommendations.
 
 ### Request recommendations for a saved child
 

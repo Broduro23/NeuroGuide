@@ -4,6 +4,38 @@ const API_BASE_URL = (
 
 const ACCESS_TOKEN_KEY = "neuroguide.access";
 const REFRESH_TOKEN_KEY = "neuroguide.refresh";
+let tokenRefreshTimer = null;
+let tokenRefreshInFlight = null;
+
+function tokenExpiryMs(token) {
+  try {
+    const payload = token.split(".")[1];
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(window.atob(base64)).exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function scheduleTokenRefresh(token) {
+  if (typeof window === "undefined") return;
+  if (tokenRefreshTimer) window.clearTimeout(tokenRefreshTimer);
+
+  const expiry = tokenExpiryMs(token);
+  if (!expiry) return;
+
+  const refreshIn = Math.max(expiry - Date.now() - 60_000, 0);
+  tokenRefreshTimer = window.setTimeout(async function refreshBeforeExpiry() {
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) {
+      const currentAccess = window.localStorage.getItem(ACCESS_TOKEN_KEY);
+      const currentExpiry = currentAccess ? tokenExpiryMs(currentAccess) : null;
+      if (currentExpiry && currentExpiry > Date.now()) {
+        tokenRefreshTimer = window.setTimeout(refreshBeforeExpiry, 15_000);
+      }
+    }
+  }, refreshIn);
+}
 
 function apiUrl(path) {
   const endpoint = String(path).replace(/^\/+/, "");
@@ -23,19 +55,22 @@ export function saveTokens(tokens) {
   if (tokens.refresh) {
     window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh);
   }
+  scheduleTokenRefresh(tokens.access);
 }
 
 export function clearTokens() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+  if (tokenRefreshTimer) window.clearTimeout(tokenRefreshTimer);
+  tokenRefreshTimer = null;
 }
 
 export function hasAccessToken() {
-  return (
-    typeof window !== "undefined" &&
-    Boolean(window.localStorage.getItem(ACCESS_TOKEN_KEY))
-  );
+  if (typeof window === "undefined") return false;
+  const access = window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (access && !tokenRefreshTimer) scheduleTokenRefresh(access);
+  return Boolean(access);
 }
 
 function errorMessage(payload, status) {
@@ -66,26 +101,32 @@ async function readResponse(response) {
 
 async function refreshAccessToken() {
   if (typeof window === "undefined") return false;
+  if (tokenRefreshInFlight) return tokenRefreshInFlight;
 
   const refresh = window.localStorage.getItem(REFRESH_TOKEN_KEY);
   if (!refresh) return false;
 
-  try {
-    const response = await fetch(apiUrl("refresh/"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh }),
-    });
-    if (!response.ok) {
-      clearTokens();
-      return false;
-    }
+  tokenRefreshInFlight = (async () => {
+    try {
+      const response = await fetch(apiUrl("refresh/"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh }),
+      });
+      if (!response.ok) {
+        clearTokens();
+        return false;
+      }
 
-    saveTokens(await response.json());
-    return true;
-  } catch {
-    return false;
-  }
+      saveTokens(await response.json());
+      return true;
+    } catch {
+      return false;
+    } finally {
+      tokenRefreshInFlight = null;
+    }
+  })();
+  return tokenRefreshInFlight;
 }
 
 /** Fetch a Django REST endpoint through the same-origin Next.js proxy. */

@@ -11,6 +11,7 @@ const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Recommendations", href: "/recommendations" },
   { label: "Content Library", href: "/content-management" },
+  { label: "Media Testing", href: "/media-testing" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },
@@ -44,6 +45,10 @@ function readableGoal(goal) {
   return goalLabels[goal] || goal.replaceAll("_", " ");
 }
 
+function isGeneralMedia(item) {
+  return item?.general_media || ["audio", "video"].includes(item?.content_type);
+}
+
 function formatAge(months) {
   const years = months / 12;
   return Number.isInteger(years) ? `${years} years` : `${years.toFixed(1)} years`;
@@ -51,10 +56,10 @@ function formatAge(months) {
 
 function MediaPlaceholder({ label, className = "" }) {
   return (
-    <div className={`relative flex aspect-video items-center justify-center overflow-hidden rounded-md border border-[#b5b5b5] bg-[#d8d8d8] text-[10px] tracking-wide text-[#858585] ${className}`}>
-      <span aria-hidden="true" className="absolute left-[-5%] top-1/2 h-px w-[110%] -rotate-[16deg] bg-[#b0b0b0]" />
-      <span aria-hidden="true" className="absolute left-[-5%] top-1/2 h-px w-[110%] rotate-[16deg] bg-[#b0b0b0]" />
-      <span className="relative z-10 bg-[#d8d8d8]/80 px-2">{label}</span>
+    <div className={`relative flex aspect-video items-center justify-center overflow-hidden rounded-md border border-[#94aab0] bg-[#dbe9eb] text-[10px] tracking-wide text-[#647d83] ${className}`}>
+      <span aria-hidden="true" className="absolute left-[-5%] top-1/2 h-px w-[110%] -rotate-[16deg] bg-[#94aab0]" />
+      <span aria-hidden="true" className="absolute left-[-5%] top-1/2 h-px w-[110%] rotate-[16deg] bg-[#94aab0]" />
+      <span className="relative z-10 bg-[#dbe9eb]/80 px-2">{label}</span>
     </div>
   );
 }
@@ -84,8 +89,8 @@ export default function Recommendations() {
         const history = await apiFetch(
           `recommend/history/?child_id=${encodeURIComponent(childId)}`,
         );
-        if (history.length > 0) {
-          const latest = [...history].sort(
+        if (history.some((item) => item.recommendations?.length > 0)) {
+          const latest = [...history].filter((item) => item.recommendations?.length > 0).sort(
             (left, right) => new Date(right.created_at) - new Date(left.created_at),
           )[0];
           setResult({
@@ -145,8 +150,8 @@ export default function Recommendations() {
           `recommend/history/?child_id=${encodeURIComponent(firstChildId)}`,
         );
         if (!active) return;
-        if (history.length > 0) {
-          const latest = [...history].sort(
+        if (history.some((item) => item.recommendations?.length > 0)) {
+          const latest = [...history].filter((item) => item.recommendations?.length > 0).sort(
             (left, right) => new Date(right.created_at) - new Date(left.created_at),
           )[0];
           setResult({
@@ -192,15 +197,15 @@ export default function Recommendations() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#292929]">
+    <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />
 
       <div className="flex flex-1 flex-col sm:flex-row">
         <Sidebar items={navigationItems} activeItem="Recommendations" />
 
         <main className="min-w-0 flex-1">
-          <div className="relative flex min-h-12 items-center justify-center border-b border-[#c9c9c9] bg-white px-16">
-            <Link href="/" className="absolute left-4 rounded-sm border border-[#bdbdbd] bg-[#e4e4e4] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[#333] no-underline hover:bg-[#d8d8d8]">
+          <div className="relative flex min-h-12 items-center justify-center border-b border-[#c9dadd] bg-white px-16">
+            <Link href="/" className="absolute left-4 rounded-sm border border-[#b6ccd1] bg-[#e7f0f2] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[#176b5b] no-underline hover:bg-[#dbe9eb]">
               ‹ &nbsp; Back
             </Link>
             <h1 className="text-center text-xs font-bold uppercase tracking-[0.14em]">
@@ -210,7 +215,7 @@ export default function Recommendations() {
 
           <div className="mx-auto w-full max-w-5xl px-4 pb-10 pt-6 sm:px-8">
             {children.length > 1 ? (
-              <label className="mb-4 flex items-center gap-2 text-sm text-[#555]">
+              <label className="mb-4 flex items-center gap-2 text-sm text-[#445f67]">
                 Recommended for
                 <select
                   value={selectedChildId}
@@ -220,7 +225,7 @@ export default function Recommendations() {
                     setResult(null);
                     loadRecommendations(childId);
                   }}
-                  className="rounded-sm border border-[#c5c5c5] bg-white px-2 py-1.5"
+                  className="rounded-sm border border-[#c9dadd] bg-white px-2 py-1.5"
                 >
                   {children.map((child) => (
                     <option key={child.id} value={String(child.id)}>
@@ -232,79 +237,92 @@ export default function Recommendations() {
             ) : null}
 
             {isLoading ? (
-              <p className="rounded-lg border border-[#c5c5c5] bg-white p-6 text-center text-sm text-[#666]">
+              <p className="rounded-lg border border-[#c9dadd] bg-white p-6 text-center text-sm text-[#536c73]">
                 Loading recommendations…
               </p>
             ) : error ? (
-              <div role="alert" className="rounded-lg border border-[#c5c5c5] bg-white p-6 text-center">
-                <p className="text-sm text-[#555]">{error}</p>
-                <Link href="/profile" className="mt-4 inline-flex rounded-md border border-[#aaa] bg-[#d2d2d2] px-4 py-2 text-xs font-semibold text-[#333] no-underline hover:bg-[#c5c5c5]">
+              <div role="alert" className="rounded-lg border border-[#c9dadd] bg-white p-6 text-center">
+                <p className="text-sm text-[#445f67]">{error}</p>
+                <Link href="/profile" className="mt-4 inline-flex rounded-md border border-[#94aab0] bg-[#c9dadd] px-4 py-2 text-xs font-semibold text-[#176b5b] no-underline hover:bg-[#c9dadd]">
                   Open child profile
                 </Link>
               </div>
             ) : featured ? (
               <>
-                <section aria-label="Recommendation context" className="mb-5 text-sm text-[#555]">
+                <section aria-label="Recommendation context" className="mb-5 text-sm text-[#445f67]">
                   <p>
                     <span className="font-semibold">Recommended for:</span>{" "}
-                    <span className="rounded-sm border border-[#c5c5c5] bg-white px-2 py-1">
+                    <span className="rounded-sm border border-[#c9dadd] bg-white px-2 py-1">
                       {result.child.display_name}
                     </span>
-                    <span className="mx-2 text-[#999]">|</span>
+                    <span className="mx-2 text-[#647d83]">|</span>
                     Age {formatAge(result.child.age_months)}
                   </p>
                   <p className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1">
                     <span className="font-semibold">Based on:</span>
-                    {result.recommendations[0].matched_goals.map((goal) => (
+                    {isGeneralMedia(featured) ? <span>general age-appropriate media</span> : featured.matched_goals.map((goal) => (
                       <span key={goal} className="inline-flex items-center gap-1">
-                        <span aria-hidden="true" className="flex size-3.5 items-center justify-center rounded-[3px] border border-[#aaa] bg-[#d8d8d8] text-[10px] leading-none text-[#555]">✓</span>
+                        <span aria-hidden="true" className="flex size-3.5 items-center justify-center rounded-[3px] border border-[#94aab0] bg-[#dbe9eb] text-[10px] leading-none text-[#445f67]">✓</span>
                         {readableGoal(goal)}
                       </span>
                     ))}
                   </p>
                 </section>
 
-                <article className="rounded-xl border border-[#c5c5c5] bg-white p-4 sm:p-6">
+                <article className="rounded-xl border border-[#c9dadd] bg-white p-4 sm:p-6">
                   <div className="grid gap-4 sm:grid-cols-[6rem_minmax(0,1fr)_4.5rem] sm:items-start">
                     <MediaPlaceholder label={featured.content_type || "Activity"} className="w-full sm:w-24" />
                     <div>
-                      <span className="inline-flex items-center gap-1 rounded-sm border border-[#bdbdbd] bg-[#e6e6e6] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[#555]">
+                      <span className="inline-flex items-center gap-1 rounded-sm border border-[#b6ccd1] bg-[#e7f0f2] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[#445f67]">
                         ★ Recommended
                       </span>
                       <h2 className="mt-2 text-lg font-bold">{featured.title}</h2>
-                      <p className="mt-2 text-sm text-[#555]">
-                        Development: <strong className="text-[#383838]">{featured.matched_goals.map(readableGoal).join(" + ") || "General learning"}</strong>
-                      </p>
-                      <p className="mt-1 text-sm text-[#555]">
+                      {isGeneralMedia(featured) ? (
+                        <p className="mt-2 text-sm text-[#445f67]">General age-appropriate activity</p>
+                      ) : (
+                        <p className="mt-2 text-sm text-[#445f67]">
+                          Development: <strong className="text-[#304b54]">{featured.matched_goals.map(readableGoal).join(" + ") || "General learning"}</strong>
+                        </p>
+                      )}
+                      <p className="mt-1 text-sm text-[#445f67]">
                         Age suitability: {formatAge(featured.age_range.minimum)}–{formatAge(featured.age_range.maximum)}
                       </p>
-                      <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-[#555]">
-                        Safety: <span aria-hidden="true" className="text-[#555]">✓</span> Assessed safe
+                      <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-[#445f67]">
+                        Safety: <span aria-hidden="true" className="text-[#445f67]">✓</span> Assessed safe
                       </p>
                     </div>
-                    <div className="flex size-[4.5rem] flex-col items-center justify-center self-start rounded-full border border-[#c5c5c5] bg-[#e9e9e9] text-center">
-                      <span className="text-lg font-bold leading-none">{Math.round(featured.relevance_score * 100)}%</span>
-                      <span className="mt-1 text-[9px] uppercase text-[#777]">Score</span>
-                    </div>
+                    {Number.isFinite(featured.relevance_score) ? (
+                      <div className="flex size-[4.5rem] flex-col items-center justify-center self-start rounded-full border border-[#c9dadd] bg-[#e7f0f2] text-center">
+                        <span className="text-lg font-bold leading-none">{Math.round(featured.relevance_score * 100)}%</span>
+                        <span className="mt-1 text-[9px] uppercase text-[#647d83]">Score</span>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="mt-5 border-t border-[#ddd] pt-4">
-                    <div className="mb-2 flex justify-between text-[10px] uppercase tracking-wide text-[#888]">
+                  {Number.isFinite(featured.relevance_score) ? <div className="mt-5 border-t border-[#dbe9eb] pt-4">
+                    <div className="mb-2 flex justify-between text-[10px] uppercase tracking-wide text-[#536c73]">
                       <span>Match Strength</span>
                       <span>{Math.round(featured.relevance_score * 100)}%</span>
                     </div>
-                    <div role="progressbar" aria-label="Recommendation match strength" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(featured.relevance_score * 100)} className="h-2.5 overflow-hidden rounded-full border border-[#c3c3c3] bg-[#dedede]">
-                      <div className="h-full rounded-full bg-[#929292]" style={{ width: `${Math.round(featured.relevance_score * 100)}%` }} />
+                    <div role="progressbar" aria-label="Recommendation match strength" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(featured.relevance_score * 100)} className="h-2.5 overflow-hidden rounded-full border border-[#b6ccd1] bg-[#dbe9eb]">
+                      <div className="h-full rounded-full bg-[#647d83]" style={{ width: `${Math.round(featured.relevance_score * 100)}%` }} />
                     </div>
                     <div className="mt-4 flex flex-wrap justify-center gap-3">
-                      <Link href={activityHref(featured)} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#aaa] bg-[#d2d2d2] px-8 text-xs font-bold uppercase tracking-[0.12em] text-[#333] no-underline transition hover:bg-[#c5c5c5]">
+                      <Link href={activityHref(featured)} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#94aab0] bg-[#c9dadd] px-8 text-xs font-bold uppercase tracking-[0.12em] text-[#176b5b] no-underline transition hover:bg-[#c9dadd]">
                         Start Activity
                       </Link>
-                      <button type="button" onClick={() => loadRecommendations(selectedChildId, true)} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#bdbdbd] bg-white px-5 text-xs font-semibold text-[#444] hover:bg-[#f3f3f3]">
+                      <button type="button" onClick={() => loadRecommendations(selectedChildId, true)} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#b6ccd1] bg-white px-5 text-xs font-semibold text-[#36535b] hover:bg-[#eef5f5]">
                         Refresh recommendations
                       </button>
                     </div>
-                  </div>
+                  </div> : <div className="mt-5 flex flex-wrap justify-center gap-3 border-t border-[#dbe9eb] pt-4">
+                    <Link href={activityHref(featured)} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#94aab0] bg-[#c9dadd] px-8 text-xs font-bold uppercase tracking-[0.12em] text-[#176b5b] no-underline transition hover:bg-[#c9dadd]">
+                      Play Activity
+                    </Link>
+                    <button type="button" onClick={() => loadRecommendations(selectedChildId, true)} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#b6ccd1] bg-white px-5 text-xs font-semibold text-[#36535b] hover:bg-[#eef5f5]">
+                      Refresh recommendations
+                    </button>
+                  </div>}
                 </article>
 
                 {recommendations.length > 1 ? (
@@ -314,19 +332,23 @@ export default function Recommendations() {
                     </h2>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {recommendations.slice(1).map((item) => (
-                        <article key={item.id} className="rounded-xl border border-[#c5c5c5] bg-white p-3.5">
+                        <article key={item.id} className="rounded-xl border border-[#c9dadd] bg-white p-3.5">
                           <MediaPlaceholder label={item.content_type || "Activity"} />
-                          <div className="py-3 text-center text-sm text-[#666]">
+                          <div className="py-3 text-center text-sm text-[#536c73]">
                             <h3 className="font-semibold">{item.title}</h3>
-                            <p className="mt-1 text-xs">{item.matched_goals.map(readableGoal).join(" · ")}</p>
-                            <p className="mt-1 text-xs">Match: {Math.round(item.relevance_score * 100)}%</p>
+                            {isGeneralMedia(item) ? (
+                              <p className="mt-1 text-xs">General age-appropriate activity · Ages {formatAge(item.age_range.minimum)}–{formatAge(item.age_range.maximum)}</p>
+                            ) : <>
+                              <p className="mt-1 text-xs">{item.matched_goals.map(readableGoal).join(" · ")}</p>
+                              <p className="mt-1 text-xs">Match: {Math.round(item.relevance_score * 100)}%</p>
+                            </>}
                           </div>
-                          <div className="mb-3 h-2 overflow-hidden rounded-full border border-[#c3c3c3] bg-[#dedede]">
-                            <div className="h-full rounded-full bg-[#aaa]" style={{ width: `${Math.round(item.relevance_score * 100)}%` }} />
-                          </div>
+                          {Number.isFinite(item.relevance_score) ? <div className="mb-3 h-2 overflow-hidden rounded-full border border-[#b6ccd1] bg-[#dbe9eb]">
+                            <div className="h-full rounded-full bg-[#94aab0]" style={{ width: `${Math.round(item.relevance_score * 100)}%` }} />
+                          </div> : null}
                           <div className="flex justify-center">
-                            <Link href={activityHref(item)} aria-label={`View ${item.title}`} className="rounded-md border border-[#bdbdbd] bg-white px-7 py-1.5 text-xs text-[#444] no-underline hover:bg-[#f3f3f3]">
-                              View activity
+                            <Link href={activityHref(item)} aria-label={`View ${item.title}`} className="rounded-md border border-[#b6ccd1] bg-white px-7 py-1.5 text-xs text-[#36535b] no-underline hover:bg-[#eef5f5]">
+                              {isGeneralMedia(item) ? "Play activity" : "View activity"}
                             </Link>
                           </div>
                         </article>
@@ -336,9 +358,9 @@ export default function Recommendations() {
                 ) : null}
               </>
             ) : (
-              <div className="rounded-lg border border-[#c5c5c5] bg-white p-6 text-center">
-                <p className="text-sm text-[#555]">No matching activities are available for this child yet.</p>
-                <p className="mt-2 text-xs text-[#777]">Add assessed content to the library, then refresh recommendations.</p>
+              <div className="rounded-lg border border-[#c9dadd] bg-white p-6 text-center">
+                <p className="text-sm text-[#445f67]">No matching activities are available for this child yet.</p>
+                <p className="mt-2 text-xs text-[#647d83]">Add assessed content to the library, then refresh recommendations.</p>
               </div>
             )}
           </div>

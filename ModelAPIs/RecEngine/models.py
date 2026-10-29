@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.exceptions import ValidationError
 
 
 class ChildProfile(models.Model):
@@ -26,7 +27,9 @@ class ChildProfile(models.Model):
 
 
 # Create your models here.
+
 class Content(models.Model):
+
     class SafetyStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         SAFE = "safe", "Safe"
@@ -38,11 +41,54 @@ class Content(models.Model):
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
 
+    class ProcessingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    class ContentType(models.TextChoices):
+        TEXT = "text", "Text"
+        VIDEO = "video", "Video"
+        AUDIO = "audio", "Audio"
+
     # Content information
     title = models.CharField(max_length=255)
-    text = models.TextField()
-    source_filename = models.CharField(max_length=255, blank=True)
-    content_type = models.CharField(max_length=50, default="text")
+
+    text = models.TextField(
+        blank=True,
+        default="",
+    )
+
+    source_filename = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+
+    content_type = models.CharField(
+        max_length=50,
+        choices=ContentType.choices,
+        default=ContentType.TEXT,
+    )
+
+    # Uploaded audio or video file
+    media_file = models.FileField(
+        upload_to="learning_content/%Y/%m/",
+        null=True,
+        blank=True,
+    )
+
+    # Speech transcribed from uploaded audio or video
+    transcript = models.TextField(
+        blank=True,
+        default="",
+    )
+
+    # Duration of uploaded audio/video, in seconds
+    media_duration_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+    )
 
     # Intended age range, expressed in months
     age_min = models.PositiveSmallIntegerField(
@@ -76,19 +122,39 @@ class Content(models.Model):
         blank=True,
     )
 
+    # Visual screening results from video frames
+    visual_assessment = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    # Audio-specific assessment results
+    audio_assessment = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
     # Developmental assessment results
     developmental_scores = models.JSONField(
         default=dict,
         blank=True,
     )
 
-    # Assessment and recommendation status
+    # Developmental assessment status
     assessment_status = models.CharField(
         max_length=20,
         choices=AssessmentStatus.choices,
         default=AssessmentStatus.PENDING,
     )
 
+    # Audio/video processing status
+    processing_status = models.CharField(
+        max_length=20,
+        choices=ProcessingStatus.choices,
+        default=ProcessingStatus.PENDING,
+    )
+
+    # Recommendation eligibility
     recommendation_eligible = models.BooleanField(
         default=False,
     )
@@ -108,14 +174,22 @@ class Content(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
         indexes = [
             models.Index(
-                fields=["safety_label", "recommendation_eligible"],
+                fields=[
+                    "safety_label",
+                    "recommendation_eligible",
+                ],
                 name="content_eligibility_idx",
             ),
             models.Index(
                 fields=["age_min", "age_max"],
                 name="content_age_range_idx",
+            ),
+            models.Index(
+                fields=["content_type", "processing_status"],
+                name="content_processing_idx",
             ),
         ]
 
@@ -123,8 +197,6 @@ class Content(models.Model):
         super().clean()
 
         if self.age_max < self.age_min:
-            from django.core.exceptions import ValidationError
-
             raise ValidationError({
                 "age_max": (
                     "Maximum age must be greater than "
@@ -132,12 +204,31 @@ class Content(models.Model):
                 )
             })
 
+        if self.content_type == self.ContentType.TEXT:
+            if not self.text.strip():
+                raise ValidationError({
+                    "text": "Text content must not be empty."
+                })
+
+        elif self.content_type in [
+            self.ContentType.VIDEO,
+            self.ContentType.AUDIO,
+        ]:
+            if not self.media_file:
+                raise ValidationError({
+                    "media_file": (
+                        "An uploaded media file is required "
+                        "for audio or video content."
+                    )
+                })
+
     def save(self, *args, **kwargs):
-        # Fail closed: content cannot be recommended unless
-        # safety and assessment requirements are satisfied.
+        # Fail closed: content is not eligible unless the
+        # required safety and developmental assessments pass.
         if (
             self.safety_label != self.SafetyStatus.SAFE
-            or self.assessment_status != self.AssessmentStatus.COMPLETED
+            or self.assessment_status
+            != self.AssessmentStatus.COMPLETED
         ):
             self.recommendation_eligible = False
 

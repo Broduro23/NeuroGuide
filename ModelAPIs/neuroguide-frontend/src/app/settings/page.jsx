@@ -10,6 +10,7 @@ const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Recommendations", href: "/recommendations" },
   { label: "Content Library", href: "/content-management" },
+  { label: "Media Testing", href: "/media-testing" },
   { label: "Activity", href: "/activity" },
   { label: "Progress", href: "/progress" },
   { label: "Profile", href: "/profile" },
@@ -17,11 +18,11 @@ const navigationItems = [
 ];
 
 const inputClasses =
-  "min-w-0 flex-1 rounded-sm border border-[#bdbdbd] bg-white px-2.5 py-2 text-xs text-[#333] outline-none placeholder:text-[#999] focus:border-[#666] focus:ring-2 focus:ring-[#666]/20";
+  "min-w-0 flex-1 rounded-sm border border-[#b6ccd1] bg-white px-2.5 py-2 text-xs text-[#176b5b] outline-none placeholder:text-[#647d83] focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20";
 
 function Toggle({ name, label, defaultChecked = false }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-4 border-t border-[#e1e1e1] py-2.5 text-xs">
+    <label className="flex cursor-pointer items-center justify-between gap-4 border-t border-[#d9e9e8] py-2.5 text-xs">
       <span>{label}</span>
       <span className="relative inline-flex shrink-0 items-center">
         <input
@@ -30,7 +31,7 @@ function Toggle({ name, label, defaultChecked = false }) {
           defaultChecked={defaultChecked}
           className="peer sr-only"
         />
-        <span className="h-5 w-10 rounded-full bg-[#c5c5c5] transition-colors peer-checked:bg-[#929292] peer-focus-visible:ring-2 peer-focus-visible:ring-[#666]/40 peer-focus-visible:ring-offset-2" />
+        <span className="h-5 w-10 rounded-full bg-[#c9dadd] transition-colors peer-checked:bg-[#647d83] peer-focus-visible:ring-2 peer-focus-visible:ring-[#536c73]/40 peer-focus-visible:ring-offset-2" />
         <span className="absolute left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
         <span className="absolute left-1.5 text-[8px] font-bold text-white peer-checked:opacity-0">OFF</span>
         <span className="absolute right-1.5 text-[8px] font-bold text-white opacity-0 peer-checked:opacity-100">ON</span>
@@ -106,7 +107,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#292929]">
+    <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />
 
       <div className="flex flex-1 flex-col sm:flex-row">
@@ -114,11 +115,11 @@ export default function Settings() {
 
         <main className="min-w-0 flex-1 px-4 pb-10 sm:px-8">
           <div className="mx-auto max-w-5xl">
-            <div className="flex min-h-14 items-center gap-3 border-b border-[#d0d0d0]">
+            <div className="flex min-h-14 items-center gap-3 border-b border-[#c9dadd]">
               <button
                 type="button"
                 onClick={() => window.history.back()}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[#bdbdbd] bg-[#e4e4e4] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[#333] hover:bg-[#d8d8d8] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#454545]"
+                className="inline-flex items-center gap-1.5 rounded-sm border border-[#b6ccd1] bg-[#e7f0f2] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[#176b5b] hover:bg-[#dbe9eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71]"
               >
                 ‹ &nbsp; Back
               </button>
@@ -128,11 +129,11 @@ export default function Settings() {
             </div>
 
             {isLoading ? (
-              <p className="py-10 text-center text-sm text-[#666]">Loading settings…</p>
+              <p className="py-10 text-center text-sm text-[#536c73]">Loading settings…</p>
             ) : (
             <form onSubmit={handleSave} onChange={() => setSaved(false)} className="grid gap-5 pt-5 lg:grid-cols-[242px_minmax(0,1fr)]">
               <div className="space-y-5">
-                <section className="rounded-lg border border-[#c5c5c5] bg-white p-4">
+                <section className="rounded-lg border border-[#c9dadd] bg-white p-4">
                   <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wide">
                     Account Settings
                   </h2>
@@ -149,17 +150,17 @@ export default function Settings() {
                       <span className="w-12 shrink-0">Email:</span>
                       <input type="email" name="email" value={account.email} onChange={(event) => setAccount((current) => ({ ...current, email: event.target.value }))} placeholder="Email address" className={inputClasses} />
                     </label>
-                    <p className="text-[10px] text-[#777]">Username: {account.username}</p>
+                    <p className="text-[10px] text-[#647d83]">Username: {account.username}</p>
                   </div>
 
-                  <p className="mt-3 text-[10px] text-[#777]">Password changes are not available through the current API.</p>
+                  <p className="mt-3 text-[10px] text-[#647d83]">Password changes are not available through the current API.</p>
                 </section>
 
-                <section className="rounded-lg border border-[#c5c5c5] bg-white p-4">
+                <section className="rounded-lg border border-[#c9dadd] bg-white p-4">
                   <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wide">
                     Notification Preferences
                   </h2>
-                  <p className="mb-3 text-[10px] text-[#777]">Preview only: notification preferences are not stored by the API yet.</p>
+                  <p className="mb-3 text-[10px] text-[#647d83]">Preview only: notification preferences are not stored by the API yet.</p>
                   <div className="space-y-2.5 text-xs">
                     {[
                       "Learning Progress Updates",
@@ -168,7 +169,7 @@ export default function Settings() {
                       "System Alerts",
                     ].map((item) => (
                       <label key={item} className="flex items-center gap-2">
-                        <input type="checkbox" name="notifications" value={item} defaultChecked={item !== "Community Events"} className="size-3.5 accent-[#666]" />
+                        <input type="checkbox" name="notifications" value={item} defaultChecked={item !== "Community Events"} className="size-3.5 accent-[#536c73]" />
                         {item}
                       </label>
                     ))}
@@ -185,14 +186,14 @@ export default function Settings() {
               </div>
 
               <div className="space-y-5">
-                <section className="rounded-lg border border-[#c5c5c5] bg-white p-4 sm:p-5">
+                <section className="rounded-lg border border-[#c9dadd] bg-white p-4 sm:p-5">
                   <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wide">
                     Privacy &amp; Data Sharing
                   </h2>
-                  <p className="mb-2 text-[10px] text-[#777]">These controls are not connected to a backend setting yet.</p>
-                  <label className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e1e1e1] py-3 text-xs">
+                  <p className="mb-2 text-[10px] text-[#647d83]">These controls are not connected to a backend setting yet.</p>
+                  <label className="flex flex-wrap items-center justify-between gap-2 border-t border-[#d9e9e8] py-3 text-xs">
                     <span>Profile Visibility</span>
-                    <select name="profileVisibility" defaultValue="Selected Caregivers" className="rounded-sm border border-[#d0d0d0] bg-white px-2 py-1.5 text-xs font-semibold text-[#444] outline-none focus:border-[#666] focus:ring-2 focus:ring-[#666]/20">
+                    <select name="profileVisibility" defaultValue="Selected Caregivers" className="rounded-sm border border-[#c9dadd] bg-white px-2 py-1.5 text-xs font-semibold text-[#36535b] outline-none focus:border-[#536c73] focus:ring-2 focus:ring-[#536c73]/20">
                       <option>Public</option>
                       <option>Private</option>
                       <option>Selected Caregivers</option>
@@ -203,30 +204,30 @@ export default function Settings() {
                 </section>
 
                 <section aria-label="Account plan summary" className="grid gap-3 sm:grid-cols-3">
-                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white p-3 text-center">
+                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
                     <p className="text-sm">Plan &amp; Billing</p>
-                    <p className="mt-1 text-[10px] text-[#777]">No billing endpoint available</p>
+                    <p className="mt-1 text-[10px] text-[#647d83]">No billing endpoint available</p>
                   </div>
-                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white p-3 text-center">
+                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
                     <p className="text-sm">Child Profiles: <strong>{childCount}</strong></p>
-                    <a href="/profile" className="mt-3 rounded-md border border-[#bdbdbd] bg-[#e5e5e5] px-3 py-1.5 text-[10px] text-[#444] no-underline hover:bg-[#d8d8d8]">
+                    <a href="/profile" className="mt-3 rounded-md border border-[#b6ccd1] bg-[#e7f0f2] px-3 py-1.5 text-[10px] text-[#36535b] no-underline hover:bg-[#dbe9eb]">
                       View Profiles
                     </a>
                   </div>
-                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c5c5c5] bg-white p-3 text-center">
+                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
                     <p className="text-sm">Recommendation History</p>
-                    <p className="mt-1 text-[10px] text-[#777]">Available in the API</p>
-                    <a href="/recommendations" className="mt-2 rounded-md border border-[#bdbdbd] bg-[#e5e5e5] px-3 py-1.5 text-[10px] text-[#444] no-underline hover:bg-[#d8d8d8]">
+                    <p className="mt-1 text-[10px] text-[#647d83]">Available in the API</p>
+                    <a href="/recommendations" className="mt-2 rounded-md border border-[#b6ccd1] bg-[#e7f0f2] px-3 py-1.5 text-[10px] text-[#36535b] no-underline hover:bg-[#dbe9eb]">
                       View Recommendations
                     </a>
                   </div>
                 </section>
 
                 <div className="flex flex-col items-start gap-2">
-                  <button type="submit" disabled={isSaving} className="min-h-10 w-full max-w-[280px] rounded-md border border-[#aaa] bg-[#d2d2d2] px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#333] transition hover:bg-[#c5c5c5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#454545] disabled:cursor-wait disabled:opacity-60">
+                  <button type="submit" disabled={isSaving} className="min-h-10 w-full max-w-[280px] rounded-md border border-[#94aab0] bg-[#c9dadd] px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#176b5b] transition hover:bg-[#c9dadd] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71] disabled:cursor-wait disabled:opacity-60">
                     {isSaving ? "Saving…" : "Save Account Details"}
                   </button>
-                  <p aria-live="polite" className="min-h-4 text-xs text-[#666]">
+                  <p aria-live="polite" className="min-h-4 text-xs text-[#536c73]">
                     {saved ? "Account details saved." : " "}
                   </p>
                   {error ? <p role="alert" className="text-xs text-red-700">{error}</p> : null}
