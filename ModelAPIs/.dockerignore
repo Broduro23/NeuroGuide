@@ -1,0 +1,24 @@
+# Version control
+.git
+
+# Python environments and generated files
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+
+# Frontend dependencies and generated Next.js output
+neuroguide-frontend/node_modules/
+neuroguide-frontend/.next/
+neuroguide-frontend/out/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Local database and editor/OS files
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/

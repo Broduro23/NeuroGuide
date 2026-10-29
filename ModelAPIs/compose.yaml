@@ -1,0 +1,121 @@
+services:
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-neuroguide}
+      POSTGRES_USER: ${DB_USER:-neuroguide}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-neuroguide_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  neuroguide-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_ENGINE: postgres
+      DB_NAME: ${DB_NAME:-neuroguide}
+      DB_USER: ${DB_USER:-neuroguide}
+      DB_PASSWORD: ${DB_PASSWORD:-neuroguide_dev_password}
+      DB_HOST: db
+      DB_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      MEDIA_ROOT: /app/media
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_NSFW_MODEL: ${HF_NSFW_MODEL:-Falconsai/nsfw_image_detection}
+      HF_NSFW_THRESHOLD: ${HF_NSFW_THRESHOLD:-0.5}
+      MEDIA_MAX_UPLOAD_BYTES: ${MEDIA_MAX_UPLOAD_BYTES:-104857600}
+      MEDIA_MAX_DURATION_SECONDS: ${MEDIA_MAX_DURATION_SECONDS:-600}
+      MEDIA_FRAME_INTERVAL_SECONDS: ${MEDIA_FRAME_INTERVAL_SECONDS:-5}
+      MEDIA_MAX_FRAMES: ${MEDIA_MAX_FRAMES:-60}
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - media_files:/app/media
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    restart: unless-stopped
+
+  neuroguide-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_ENGINE: postgres
+      DB_NAME: ${DB_NAME:-neuroguide}
+      DB_USER: ${DB_USER:-neuroguide}
+      DB_PASSWORD: ${DB_PASSWORD:-neuroguide_dev_password}
+      DB_HOST: db
+      DB_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      MEDIA_ROOT: /app/media
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_NSFW_MODEL: ${HF_NSFW_MODEL:-Falconsai/nsfw_image_detection}
+      HF_NSFW_MODEL_PATH: /models/nsfw_image_detection
+      HF_NSFW_THRESHOLD: ${HF_NSFW_THRESHOLD:-0.5}
+      MEDIA_NSFW_MIN_FLAGGED_FRAMES: ${MEDIA_NSFW_MIN_FLAGGED_FRAMES:-2}
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-tiny}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_CPU_THREADS: ${WHISPER_CPU_THREADS:-2}
+      WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE:-1}
+      WHISPER_DOWNLOAD_ROOT: /model-cache
+      MEDIA_MAX_UPLOAD_BYTES: ${MEDIA_MAX_UPLOAD_BYTES:-104857600}
+      MEDIA_MAX_DURATION_SECONDS: ${MEDIA_MAX_DURATION_SECONDS:-600}
+      MEDIA_FRAME_INTERVAL_SECONDS: ${MEDIA_FRAME_INTERVAL_SECONDS:-5}
+      MEDIA_MAX_FRAMES: ${MEDIA_MAX_FRAMES:-60}
+    volumes:
+      - .:/app
+      - media_files:/app/media
+      - ./model_cache/nsfw_image_detection:/models/nsfw_image_detection
+      - whisper_cache:/model-cache
+    command: celery -A config worker --loglevel=INFO --pool=solo --concurrency=1 --prefetch-multiplier=1
+    restart: unless-stopped
+
+  neuroguide-frontend:
+    build: ./neuroguide-frontend
+    depends_on:
+      - neuroguide-api
+    environment:
+      API_INTERNAL_BASE_URL: http://neuroguide-api:8000
+      NEXT_PUBLIC_API_BASE_URL: /api/ModelAPIs/RecEngine
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./neuroguide-frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  media_files:
+  whisper_cache:
+  frontend_node_modules:
+  frontend_next:

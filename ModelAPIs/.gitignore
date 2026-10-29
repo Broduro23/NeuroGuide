@@ -1,0 +1,8 @@
+**/.venv/
+**/venv/
+/models/devassessment
+/models/
+/model_cache/
+.env
+.env.*
+
