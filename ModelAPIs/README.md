@@ -1,18 +1,21 @@
 # NeuroGuide Model APIs
 
-NeuroGuide Model APIs is a Django REST Framework backend for caregiver accounts, child profiles, text classification, developmental scoring, and age- and goal-based learning content recommendations. PostgreSQL stores users, child profiles, and submitted learning content.
+NeuroGuide is a Docker Compose application with a Django REST Framework API and a Next.js frontend. It supports caregiver and content-provider accounts, child profiles, text and media assessment, moderation, and age- and goal-based recommendations. PostgreSQL stores accounts, profiles, content, moderation flags, notifications, and recommendation history.
 
 ## Features
 
-- Register accounts, obtain and refresh JSON Web Tokens (JWTs), and view or update the authenticated user's profile.
-- Assign role based access for administrators, caregivers/parents, and content providers.
-- Create and manage child profiles. Each caregiver can access only their own child profiles.
+- Register caregiver/parent or content-provider accounts, obtain and refresh JSON Web Tokens (JWTs), and edit account details in Settings.
+- Enforce role-based access for administrators, caregivers/parents, and content providers in both the API and frontend.
+- Create and manage child profiles. Caregivers can access only their own profiles; administrators can review all child profiles and request recommendations for each one.
 - Classify text as safe or unsafe and return the model confidence.
 - Score text against 21 developmental domains and classify its overall suitability.
 - Submit text, audio, and video learning content for safety and developmental assessment. Audio and video use their safe speech transcripts to produce developmental scores and suitability classifications.
-- Manage the full content library: list and retrieve records, update or delete them, and rerun assessments.
-- Request ranked recommendations using a caregiver's saved child profile.
+- Let content providers manage only content they uploaded; administrators can manage all content.
+- Let authenticated users flag content. Flagged content is hidden from caregiver activities and recommendations pending review; admins can clear or reject flags.
+- Notify content providers when their content is flagged and when an administrator resolves the review.
+- Request ranked recommendations using a caregiver's saved child profile. Administrators can select any child profile.
 - Persist recommendation history with a snapshot of the child, goals, and returned content; record views, clicks, saves, completions, dismissals, and caregiver feedback.
+- Show a public login/register landing page to logged-out visitors, a profile menu with logout, and an unread-notification indicator in the navbar.
 - Accept plain text in JSON or `.txt` uploads for the prediction and content submission endpoints.
 
 ## Run with Docker Compose
@@ -57,15 +60,15 @@ The Django command runs the backend suite in the API container. Tests cover regi
 
 After the Django suite completes, the custom test runner writes `test_results.xlsx` in the project root with one row per test and the columns `Test Name`, `Purpose`, and `Status` (`PASS` or `FAIL`). Skipped tests are reported as `FAIL` and include the skip reason in the purpose column because they did not pass.
 
-The same Compose stack starts the Next.js frontend at <http://localhost:3000>, Redis, and one Celery media worker. The API and worker share the persistent `media_files` volume. The API image installs FFmpeg/ffprobe and Python dependencies from `requirements.txt`; the project and model files are supplied by the Compose bind mount. PyTorch is CPU-only. Frontend requests can use the `NEXT_PUBLIC_API_BASE_URL` value (`/api/ModelAPIs/RecEngine`); Next.js proxies those requests to Django using `API_INTERNAL_BASE_URL`, so browser requests stay same-origin.
+The same Compose stack starts the Next.js frontend at <http://localhost:3000>, Redis, and one Celery media worker. The API and worker share the persistent `media_files` volume. The API image installs FFmpeg/ffprobe and Python dependencies from `requirements.txt`; the project and model files are supplied by the Compose bind mount. PyTorch is CPU-only. Frontend requests use `/api/ModelAPIs/RecEngine`; Next.js proxies those requests to Django using `API_INTERNAL_BASE_URL`, so browser requests stay same-origin. The Next.js proxy and API upload limit are configured for 100 MB media uploads by default; `MEDIA_MAX_UPLOAD_BYTES` adjusts the API limit.
 
-Video frame safety checks run locally with the Transformers image-classification pipeline. The worker downloads `HF_NSFW_MODEL` from Hugging Face on its first video assessment and stores a persistent copy in `./model_cache/nsfw_image_detection`, which is mounted into the worker at `/models/nsfw_image_detection`. The public default model does not require `HF_TOKEN`; set it only if the selected model requires authentication. A video is flagged by its sampled frames when at least `MEDIA_NSFW_MIN_FLAGGED_FRAMES` frames meet the `HF_NSFW_THRESHOLD` (default: two frames at 0.5). Audio transcription runs locally with open-source faster-whisper; its model downloads on first use and is cached in the `whisper_cache` Docker volume. The defaults use the multilingual `tiny` model with CPU INT8, two CPU threads, and beam size one. Set `WHISPER_MODEL_SIZE` to `base` or `small` for higher transcription accuracy at greater memory and latency cost. Media limits are configurable with `MEDIA_MAX_UPLOAD_BYTES`, `MEDIA_MAX_DURATION_SECONDS`, `MEDIA_FRAME_INTERVAL_SECONDS`, and `MEDIA_MAX_FRAMES`; visual model settings use `HF_NSFW_MODEL` and `HF_NSFW_THRESHOLD`. One worker processes one media job at a time; within a job, audio and visual checks run concurrently. Frames are sampled across the clip, increasing the interval if needed to stay within the frame cap. Brief scenes between sampled frames may still be missed.
+Video frame safety checks run locally with the Transformers image-classification pipeline. The worker downloads `HF_NSFW_MODEL` from Hugging Face on its first video assessment and stores a persistent copy in `./model_cache/nsfw_image_detection`, which is mounted into the worker at `/models/nsfw_image_detection`. The public default model does not require `HF_TOKEN`; leave it blank unless the selected model requires authentication. Never commit a live token to `.env.example` or source control. A video is flagged by its sampled frames when at least `MEDIA_NSFW_MIN_FLAGGED_FRAMES` frames meet the `HF_NSFW_THRESHOLD` (default: two frames at 0.5). Audio transcription runs locally with open-source faster-whisper; its model downloads on first use and is cached in the `whisper_cache` Docker volume. The defaults use the multilingual `tiny` model with CPU INT8, two CPU threads, and beam size one. Set `WHISPER_MODEL_SIZE` to `base` or `small` for higher transcription accuracy at greater memory and latency cost. Media limits are configurable with `MEDIA_MAX_UPLOAD_BYTES`, `MEDIA_MAX_DURATION_SECONDS`, `MEDIA_FRAME_INTERVAL_SECONDS`, and `MEDIA_MAX_FRAMES`; visual model settings use `HF_NSFW_MODEL` and `HF_NSFW_THRESHOLD`. One worker processes one media job at a time; within a job, audio and visual checks run concurrently. Frames are sampled across the clip, increasing the interval if needed to stay within the frame cap. Brief scenes between sampled frames may still be missed.
 
 To remove the database volume and all stored database data, run `docker compose down -v`.
 
 ## Configuration and model files
 
-Compose reads database settings from `.env`. The development defaults are in `.env.example`; change the sample password for your local setup. The API service uses the same database settings and connects to the Postgres service by its Compose name, `db`.
+Compose reads configuration from `.env`. Start with `.env.example`, change the development database password, and add `HF_TOKEN` only when the selected Hugging Face model requires authentication. Do not commit `.env`. The API service connects to Postgres using the Compose service name `db`.
 
 The prediction modules expect these local files:
 
@@ -94,7 +97,7 @@ Registration and login are public. Login returns `access` and `refresh` JWTs. Fo
 Authorization: Bearer <access-token>
 ```
 
-Protected endpoints include profile, child profile, content library/detail routes, and recommendation/history routes. The standalone prediction endpoints remain public.
+Protected endpoints require an authenticated session or JWT. The prediction endpoints are restricted to administrators and content providers. The frontend refreshes access tokens automatically while a refresh token remains valid; logging out clears the local tokens.
 
 For browser use, open a browsable API endpoint such as `/ModelAPIs/RecEngine/children/` and use the page's **Log in** link. This signs into the browsable API with a Django session; a JWT does not need to be pasted into browser forms. The same API continues to accept JWT bearer tokens from clients such as Postman or `curl`.
 
@@ -106,18 +109,22 @@ For browser use, open a browsable API endpoint such as `/ModelAPIs/RecEngine/chi
 | `POST` | `/login/` | Public | Obtain JWT access and refresh tokens. |
 | `POST` | `/refresh/` | Public | Exchange a refresh token for a new access token. |
 | `GET`, `POST` | `/api-auth/login/` | Django session | Sign in or out of the browsable API in a browser. |
-| `GET`, `PUT`, `PATCH` | `/profile/` | JWT | Retrieve or update the current user's profile. |
-| `GET`, `POST` | `/children/` | JWT | List the current user's children or create a child profile. |
-| `GET`, `PUT`, `PATCH`, `DELETE` | `/children/<id>/` | JWT | Retrieve or manage one of the current user's child profiles. |
-| `POST` | `/predict/` | Public | Return developmental probabilities and predicted domains for text. |
-| `POST` | `/safety/predict/` | Public | Classify text as safe or unsafe and return confidence. |
-| `GET`, `POST` | `/content/` | JWT | List all stored content records or submit and assess new content. |
-| `GET`, `PATCH`, `DELETE` | `/content/<id>/` | JWT | Retrieve, update, or delete a content record. Changes to text or age range reset assessment results and eligibility. |
-| `POST` | `/content/<id>/assess/` | JWT | Rerun safety assessment; developmental scoring applies to text content. |
-| `POST` | `/recommend/` | JWT | Generate recommendations for one of the caregiver's saved child profiles and record the result in history. |
-| `GET` | `/recommend/history/` | JWT | List the caregiver's recommendation history; optionally filter with `?child_id=<id>`. |
-| `POST` | `/recommend/history/<history_id>/feedback/` | JWT | Add or update a 1–5 rating and optional text feedback for a result. |
-| `POST` | `/recommend/history/<history_id>/activity/` | JWT | Record a content `viewed`, `clicked`, `saved`, `completed`, or `dismissed` event for a result. |
+| `GET`, `PUT`, `PATCH` | `/profile/` | Authenticated user | Retrieve or update the current user's own account profile. The frontend account form is in Settings. |
+| `GET`, `POST` | `/children/` | Caregiver: own; Admin: all | List accessible child profiles or create a child profile. |
+| `GET`, `PUT`, `PATCH`, `DELETE` | `/children/<id>/` | Caregiver: own; Admin: all | Retrieve or manage an accessible child profile. |
+| `POST` | `/predict/` | Admin, Content Provider | Return developmental-domain probabilities and predicted domains for text. |
+| `POST` | `/safety/predict/` | Admin, Content Provider | Classify text as safe or unsafe and return confidence. |
+| `GET`, `POST` | `/content/` | GET: role-filtered; POST: Admin, Content Provider | List visible records or submit and assess content. Admins see all; providers see their own uploads; caregivers see safe, unflagged content. |
+| `GET`, `PATCH`, `DELETE` | `/content/<id>/` | Admin; provider owner; caregiver safe/unflagged GET only | Retrieve or manage content. Providers cannot modify another provider's upload. Editing assessed fields resets assessment and eligibility. |
+| `POST` | `/content/<id>/assess/` | Admin, provider owner | Queue a new safety and developmental assessment. |
+| `POST` | `/content/<id>/flag/` | Any authenticated user | Flag content for admin review. It is hidden from caregiver activities and recommendations while flagged. |
+| `POST` | `/content/<id>/moderate/` | Admin | Clear or reject flagged content; a decision is sent to its provider as a notification. |
+| `POST` | `/recommend/` | Caregiver: own child; Admin: any child | Generate and store recommendations for a saved child profile. |
+| `GET` | `/recommend/history/` | Caregiver: own history; Admin: all | List history; optionally filter with `?child_id=<id>`. |
+| `POST` | `/recommend/history/<history_id>/feedback/` | History owner; Admin | Add or update a 1–5 rating and optional text feedback. |
+| `POST` | `/recommend/history/<history_id>/activity/` | History owner; Admin | Record a content `viewed`, `clicked`, `saved`, `completed`, or `dismissed` event. |
+| `GET` | `/notifications/` | Authenticated user | List the current user's notifications. |
+| `POST` | `/notifications/<id>/read/` | Notification recipient | Mark a notification as read. |
 | `GET` | `/admin/` | Django admin | Open the Django administration site. |
 
 For example, the login endpoint is `http://localhost:8000/ModelAPIs/RecEngine/login/`.
@@ -140,7 +147,9 @@ Send JSON to `POST /register/`:
 
 Public registration accepts `caregiver` or `content_provider`. Admin accounts cannot be created from the registration form. Existing users become caregivers by default, while Django staff/superusers have administrator access. Create or reset the two bootstrap administrators by running `docker compose exec neuroguide-api python manage.py create_neuroguide_admins` and entering their shared password at the prompt.
 
-Administrators can use all application views and APIs. Caregivers can manage their child profiles and use activities, recommendations, and progress views. Content providers can view and manage the content library and media assessment tools. API permissions enforce these roles in addition to the frontend navigation and route checks.
+Administrators can use all application views and APIs, view every child profile, and select a child to generate or review recommendations. Caregivers can manage only their own child profiles and use activities, recommendations, and progress. Content providers can manage only their own uploads, use media assessment tools, and receive in-app notifications about flags and review decisions. Every authenticated role can flag content; only admins can clear or reject a flag. API permissions enforce ownership and role rules in addition to frontend navigation.
+
+The Profile page is for child profiles. All roles edit their own account details in Settings. A caregiver cannot see flagged or rejected content. The Activities catalog can show safe, unflagged content even before recommendation history exists, which helps populate the page during cold start. Recommendations use the stricter assessment and suitability eligibility rules described below. The navbar profile menu provides the profile/settings link and logout; the notification bell shows a red dot when the user has unread notifications.
 
 ### Log in and use a protected route
 
@@ -202,7 +211,7 @@ Send an authenticated JSON `POST /content/` request with `text` or upload a `.tx
 }
 ```
 
-Text upload returns `202 Accepted` after saving and queueing assessment, so the API request does not wait for model loading or inference. The worker checks safety first and runs developmental scoring only when the text is classified as safe. Content is recommendation-eligible only after both assessments complete successfully and suitability is Suitable or Partially Suitable. Poll `GET /content/<id>/` for `assessment_status`, `safety_label`, `suitability_label`, `developmental_scores`, and `recommendation_eligible`. Text content is limited to 100,000 characters; uploaded files are limited to 2 MB and must be UTF-8 `.txt` files.
+Text upload returns `202 Accepted` after saving and queueing assessment, so the API request does not wait for model loading or inference. The worker checks safety first and runs developmental scoring only when the text is classified as safe. Content is recommendation-eligible only after both assessments complete successfully and suitability is Suitable or Partially Suitable. Poll `GET /content/<id>/` for `assessment_status`, `safety_label`, `suitability_label`, `developmental_scores`, and `recommendation_eligible`. Text content is limited to 100,000 characters; uploaded files are limited to 2 MB and must be UTF-8 `.txt` files. Audio and video uploads default to a 100 MB limit, configurable through `MEDIA_MAX_UPLOAD_BYTES`.
 
 Audio and video are submitted as multipart uploads using the `media_file` field and `content_type=audio` or `content_type=video`. They return `202 Accepted` while the single worker probes the media, transcribes speech locally with faster-whisper, checks transcript safety with the existing BERT model, and checks sampled video frames with the local Falconsai NSFW image classifier. If any checked frame or transcript is unsafe, the content is marked unsafe and remains ineligible. A processing or model-download failure is marked inconclusive/failed and remains ineligible. Poll `GET /content/<id>/` for `processing_status`, `safety_label`, `visual_assessment`, `audio_assessment`, and `transcript`.
 
@@ -220,7 +229,7 @@ curl http://localhost:8000/ModelAPIs/RecEngine/content/ \
 
 ### Manage stored content
 
-All content-management requests require a JWT access token. `GET /content/` lists records, including pending, unsafe, and failed assessments. `GET /content/<id>/` retrieves one record. `PATCH /content/<id>/` can update `title`, `text`, `age_min`, `age_max`, and `content_type`; changing the text or age range clears previous assessment results and makes the item ineligible until reassessed. `DELETE /content/<id>/` removes the record.
+All content-management requests require a JWT access token. The records returned by `GET /content/` are role-filtered: admins see all content, providers see their own uploads, and caregivers see only safe, unflagged content. Admins and owning providers can retrieve pending, unsafe, or failed assessments. `GET /content/<id>/` retrieves an accessible record. `PATCH /content/<id>/` can update `title`, `text`, `age_min`, `age_max`, and `content_type`; changing assessed fields clears previous assessment results and makes the item ineligible until reassessed. `DELETE /content/<id>/` removes a record when permitted by the same ownership rules.
 
 To rerun assessment, send an authenticated empty `POST` to `/content/<id>/assess/`. Text reassessment returns `202 Accepted` and is performed by the worker. Audio and video receive safety checks; when speech is present and its transcript passes safety review, that transcript is assessed for developmental scores and suitability. Long text and transcripts are evaluated in overlapping model-length windows. Media without an assessable transcript, or with an unsafe transcript or visual result, remains ineligible for recommendations.
 
@@ -235,7 +244,11 @@ First create or update a child profile with an age and one or more valid `learni
 }
 ```
 
-The API reads age and goals from the authenticated caregiver's child profile; clients cannot request recommendations for another user's child. Learning goal names must match one of the 21 model labels, including `counting`, `number_identification`, `working_memory`, `expressive_language`, or `self_regulation`. Recommendations include content with completed developmental assessment, a suitability classification of `Suitable` or `Partially Suitable`, and an age range containing the child's age. `Not Suitable` content is excluded. Suitable and Partially Suitable items use the same score: the arithmetic mean of the model probabilities for the child's selected goals. For audio and video, these probabilities are based on the safety-checked transcript. Results include `relevance_score` and the selected `goal_scores`; each request is stored in recommendation history.
+The API reads age and goals from the selected child profile. Caregivers can request recommendations only for their own children; administrators can select any child profile. Learning goal names must match one of the 21 model labels, including `counting`, `number_identification`, `working_memory`, `expressive_language`, or `self_regulation`. Recommendation candidates must be safe, unflagged, assessed, marked eligible, classified `Suitable` or `Partially Suitable`, and have an age range containing the child's age. `Not Suitable`, flagged, and rejected content is excluded.
+
+The `relevance_score` is the arithmetic mean of the model probabilities for the selected goals. For example, probabilities of 0.80 for counting and 0.60 for expressive language produce a score of 0.70 (70%). `goal_scores` contains each probability and `matched_goals` lists goals with a score of at least 0.5. Suitable and Partially Suitable content use the same relevance calculation. For audio and video, domain probabilities are based on the safety-checked transcript. Results are stored in recommendation history.
+
+The trained suitability output order is `Not Suitable`, `Partially Suitable`, `Suitable`; the runtime label mapping follows that order. The developmental-assessment training notebook describes a synthetic/generated dataset, so these model probabilities and suitability labels are experimental prototype outputs, not expert-validated educational judgments.
 
 ### Review history, log activity, and submit feedback
 
