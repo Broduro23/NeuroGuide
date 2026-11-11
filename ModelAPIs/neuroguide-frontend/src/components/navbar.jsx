@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiFetch, hasAccessToken } from "../lib/api";
+import { useRouter } from "next/navigation";
+import { apiFetch, clearTokens, hasAccessToken } from "../lib/api";
 
 /** Top application bar with configurable branding and account actions. */
 export default function Navbar({
@@ -15,35 +16,67 @@ export default function Navbar({
   profileHref = "/profile",
   className = "",
 }) {
+  const router = useRouter();
   const [sessionName, setSessionName] = useState(userName);
+  const [hasSession, setHasSession] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
 
-    if (!hasAccessToken()) {
-      setSessionName("Profile");
-      return () => {
-        active = false;
-      };
-    }
+    async function loadSessionDetails() {
+      if (!hasAccessToken()) {
+        await Promise.resolve();
+        if (active) {
+          setHasSession(false);
+          setUnreadCount(0);
+          setSessionName(userName);
+        }
+        return;
+      }
 
-    apiFetch("profile/")
-      .then((profile) => {
+      try {
+        const [profile, notifications] = await Promise.all([
+          apiFetch("profile/"),
+          apiFetch("notifications/"),
+        ]);
         if (!active) return;
         const fullName = [profile.first_name, profile.last_name]
           .filter(Boolean)
           .join(" ")
           .trim();
+        setHasSession(true);
         setSessionName(fullName || profile.username || userName);
-      })
-      .catch(() => {
-        if (active) setSessionName(userName);
-      });
+        setUnreadCount(notifications.filter((item) => !item.read).length);
+      } catch {
+        if (!active) return;
+        setHasSession(false);
+        setUnreadCount(0);
+        setSessionName(userName);
+      }
+    }
+
+    loadSessionDetails();
+    const interval = window.setInterval(loadSessionDetails, 30_000);
+    window.addEventListener("focus", loadSessionDetails);
 
     return () => {
       active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", loadSessionDetails);
     };
   }, [userName]);
+
+  function logOut() {
+    clearTokens();
+    setHasSession(false);
+    setUnreadCount(0);
+    setSessionName(userName);
+    setProfileMenuOpen(false);
+    router.push(homeHref);
+    router.refresh();
+  }
 
   const nameParts = sessionName.trim().split(/\s+/).filter(Boolean);
   const initials = avatarLabel ?? (
@@ -70,10 +103,10 @@ export default function Navbar({
       </Link>
 
       <div className="ml-4 flex shrink-0 items-center gap-3 sm:gap-4">
-        <Link
+        {hasSession ? <Link
           href={notificationsHref}
-          aria-label="Notifications"
-          className="flex size-8 items-center justify-center rounded-sm border border-[#b6ccd1] bg-[#e7f0f2] text-[#536c73] transition-colors hover:bg-[#dbe9eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71]"
+          aria-label={unreadCount ? `Notifications, ${unreadCount} unread` : "Notifications"}
+          className="relative flex size-8 items-center justify-center rounded-sm border border-[#b6ccd1] bg-[#e7f0f2] text-[#536c73] transition-colors hover:bg-[#dbe9eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71]"
         >
           <svg
             aria-hidden="true"
@@ -85,17 +118,38 @@ export default function Navbar({
           >
             <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
           </svg>
-        </Link>
+          {unreadCount > 0 ? <span aria-hidden="true" className="absolute right-0 top-0 size-2.5 translate-x-1/4 -translate-y-1/4 rounded-full bg-red-600 ring-2 ring-white" /> : null}
+        </Link> : null}
 
-        <Link
-          href={profileHref}
-          className="flex items-center gap-2 text-sm text-inherit no-underline hover:text-[#536c73] focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71]"
-        >
-          <span className="flex size-8 items-center justify-center rounded-full border border-[#b6ccd1] bg-[#e7f0f2] text-[0.6rem] text-[#536c73]">
-            {initials}
-          </span>
-          <span className="hidden sm:inline">{sessionName}</span>
-        </Link>
+        <div className="relative">
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={profileMenuOpen}
+            onClick={() => setProfileMenuOpen((open) => !open)}
+            className="flex items-center gap-2 text-sm text-inherit hover:text-[#536c73] focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#287a71]"
+          >
+            <span className="flex size-8 items-center justify-center rounded-full border border-[#b6ccd1] bg-[#e7f0f2] text-[0.6rem] text-[#536c73]">
+              {initials}
+            </span>
+            <span className="hidden sm:inline">{sessionName}</span>
+          </button>
+          {profileMenuOpen ? (
+            <div role="menu" className="absolute right-0 z-50 mt-2 min-w-44 rounded-lg border border-[#c9dadd] bg-white p-1.5 shadow-lg">
+              {hasSession ? (
+                <>
+                  <Link role="menuitem" href={profileHref} onClick={() => setProfileMenuOpen(false)} className="block rounded-md px-3 py-2 text-sm text-[#304b54] no-underline hover:bg-[#eef5f5]">My profile</Link>
+                  <button role="menuitem" type="button" onClick={logOut} className="block w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-red-700 hover:bg-red-50">Log out</button>
+                </>
+              ) : (
+                <>
+                  <Link role="menuitem" href="/login" onClick={() => setProfileMenuOpen(false)} className="block rounded-md px-3 py-2 text-sm text-[#304b54] no-underline hover:bg-[#eef5f5]">Log in</Link>
+                  <Link role="menuitem" href="/register" onClick={() => setProfileMenuOpen(false)} className="block rounded-md px-3 py-2 text-sm text-[#304b54] no-underline hover:bg-[#eef5f5]">Create account</Link>
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );

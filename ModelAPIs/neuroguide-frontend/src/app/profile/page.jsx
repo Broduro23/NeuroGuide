@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -19,6 +20,7 @@ const navigationItems = [
 ];
 
 const learningGoals = [
+  ["counting", "Counting"],
   ["number_identification", "Number identification"],
   ["number_size_discrimination", "Number size"],
   ["letter_alphabet_knowledge", "Letters and alphabet"],
@@ -77,12 +79,13 @@ function formatGoal(goal) {
   return learningGoals.find(([value]) => value === goal)?.[1] || goal;
 }
 
-export default function Profile() {
+function ProfileContent() {
   const router = useRouter();
   const [children, setChildren] = useState([]);
   const [selectedChildId, setSelectedChildId] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [history, setHistory] = useState([]);
+  const [userProfile, setUserProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
@@ -102,8 +105,12 @@ export default function Profile() {
       };
     }
 
-    apiFetch("children/")
-      .then((records) => {
+    apiFetch("profile/")
+      .then(async (profile) => {
+        if (!active) return;
+        setUserProfile(profile);
+        if (profile.role === "content_provider") return;
+        const records = await apiFetch("children/");
         if (!active) return;
         setChildren(records);
         const firstChild = records[0];
@@ -241,10 +248,10 @@ export default function Profile() {
                 ‹ &nbsp; Back
               </Link>
               <h1 className="text-xs font-bold uppercase tracking-[0.14em]">
-                Child Profile
+                Child Profiles
               </h1>
               <div className="ml-auto flex items-center gap-2">
-                {children.length > 0 ? (
+                {userProfile?.role !== "content_provider" && children.length > 0 ? (
                   <select
                     aria-label="Choose child profile"
                     value={selectedChildId}
@@ -259,18 +266,23 @@ export default function Profile() {
                     <option value="">New profile</option>
                   </select>
                 ) : null}
-                <button
+                {userProfile?.role !== "content_provider" ? <button
                   type="button"
                   onClick={startNewProfile}
                   className="rounded-sm border border-[#b6ccd1] bg-white px-2.5 py-1.5 text-xs hover:bg-[#eef5f5]"
                 >
                   Add child
-                </button>
+                </button> : null}
               </div>
             </div>
 
             {isLoading ? (
               <p className="py-10 text-center text-sm text-[#536c73]">Loading child profiles…</p>
+            ) : userProfile?.role === "content_provider" ? (
+              <div className="rounded-lg border border-[#c9dadd] bg-white p-6 text-sm text-[#536c73]">
+                <p>Child profiles are available to Caregiver/Parent accounts. Edit your account details in Settings.</p>
+                <Link href="/settings" className="mt-4 inline-flex rounded-md border border-[#b6ccd1] bg-[#e7f0f2] px-4 py-2 text-xs font-semibold text-[#36535b] no-underline hover:bg-[#dbe9eb]">Open Settings</Link>
+              </div>
             ) : (
               <form onSubmit={handleSave} onChange={() => setSaved(false)}>
                 <div className="grid gap-6 pt-5 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-7">
@@ -442,4 +454,8 @@ export default function Profile() {
       </div>
     </div>
   );
+}
+
+export default function Profile() {
+  return <RoleGate><ProfileContent /></RoleGate>;
 }

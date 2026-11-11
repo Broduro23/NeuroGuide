@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -33,7 +34,7 @@ function activityHref(historyId, contentId) {
   return `/activity?${params.toString()}`;
 }
 
-export default function Progress() {
+function ProgressContent() {
   const router = useRouter();
   const [history, setHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -198,4 +199,8 @@ export default function Progress() {
       </div>
     </div>
   );
+}
+
+export default function Progress() {
+  return <RoleGate><ProgressContent /></RoleGate>;
 }

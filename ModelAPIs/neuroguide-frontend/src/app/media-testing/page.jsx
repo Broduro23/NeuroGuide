@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -127,6 +128,36 @@ function AssessmentPanel({ content }) {
         {audio.error ? <p className="mt-3 text-sm text-rose-700">{audio.error}</p> : null}
       </section>
 
+      <section className="rounded-2xl border border-[#c9dadd] bg-white p-4 sm:p-5 lg:col-span-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-semibold text-[#183940]">Transcript developmental assessment</h3>
+          <StatusPill tone={content.suitability_label === "Suitable" ? "good" : "neutral"}>
+            {content.suitability_label || "Not assessed"}
+          </StatusPill>
+        </div>
+        {Object.keys(content.developmental_scores || {}).length > 0 ? (
+          <details className="mt-3 rounded-lg border border-[#c9dadd] bg-[#f6fafb] px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-[#176b5b]">
+              View transcript domain probabilities
+            </summary>
+            <ul className="mt-3 grid gap-2 text-xs text-[#536c73] sm:grid-cols-2 lg:grid-cols-3">
+              {Object.entries(content.developmental_scores)
+                .sort((left, right) => Number(right[1]) - Number(left[1]))
+                .map(([domain, score]) => (
+                  <li key={domain} className="flex justify-between gap-3 border-b border-[#e0ebed] pb-1">
+                    <span>{domain.replaceAll("_", " ")}</span>
+                    <strong>{Math.round(Number(score) * 100)}%</strong>
+                  </li>
+                ))}
+            </ul>
+          </details>
+        ) : (
+          <p className="mt-2 text-sm leading-6 text-[#536c73]">
+            A safe, non-empty transcript is required to calculate developmental probabilities and suitability.
+          </p>
+        )}
+      </section>
+
       {content.transcript ? (
         <section className="rounded-2xl border border-[#c9dadd] bg-white p-4 sm:p-5 lg:col-span-2">
           <h3 className="font-semibold text-[#183940]">Transcribed speech</h3>
@@ -145,7 +176,7 @@ function AssessmentPanel({ content }) {
   );
 }
 
-export default function MediaTestingPage() {
+function MediaTestingPageContent() {
   const router = useRouter();
   const [contents, setContents] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -177,7 +208,10 @@ export default function MediaTestingPage() {
   const hasPendingJobs = useMemo(
     () => contents.some((item) =>
       ["audio", "video"].includes(item.content_type) &&
-      ["pending", "processing"].includes(item.processing_status)
+      (
+        ["pending", "processing"].includes(item.processing_status) ||
+        item.assessment_status === "pending"
+      )
     ),
     [contents],
   );
@@ -430,7 +464,7 @@ export default function MediaTestingPage() {
                       {selectedContent.processing_status === "pending" || selectedContent.processing_status === "processing" ? (
                         <div className="mt-5 flex items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
                           <span className="size-2 animate-pulse rounded-full bg-sky-600" aria-hidden="true" />
-                          Waiting for the single media worker to finish this run. Results refresh automatically.
+                          The worker is transcribing speech, checking transcript safety, and scoring developmental domains. Frame results can appear before transcript scoring finishes. Results refresh automatically.
                         </div>
                       ) : null}
 
@@ -462,4 +496,8 @@ export default function MediaTestingPage() {
       </div>
     </div>
   );
+}
+
+export default function MediaTestingPage() {
+  return <RoleGate><MediaTestingPageContent /></RoleGate>;
 }

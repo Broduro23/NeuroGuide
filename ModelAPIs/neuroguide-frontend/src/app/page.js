@@ -1,6 +1,10 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Navbar from "../components/navbar";
 import Sidebar from "../components/Sidebar";
+import { apiFetch, hasAccessToken } from "../lib/api";
 
 const navigationItems = [
   { label: "Home", href: "/" },
@@ -49,6 +53,55 @@ const features = [
 ];
 
 export default function Home() {
+  const [authenticated, setAuthenticated] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!hasAccessToken()) {
+      Promise.resolve().then(() => {
+        if (active) setAuthenticated(false);
+      });
+      return () => { active = false; };
+    }
+
+    apiFetch("profile/")
+      .then(() => { if (active) setAuthenticated(true); })
+      .catch(() => { if (active) setAuthenticated(false); });
+
+    return () => { active = false; };
+  }, []);
+
+  if (authenticated !== true) {
+    return (
+      <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
+        <Navbar />
+        <main className="flex flex-1 items-center justify-center px-4 py-12 sm:px-8">
+          {authenticated === null ? (
+            <p role="status" className="text-sm text-[#536c73]">Checking your session…</p>
+          ) : (
+            <section className="w-full max-w-3xl rounded-2xl border border-[#c9dadd] bg-white px-6 py-10 text-center shadow-sm sm:px-12 sm:py-14">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#647d83]">NeuroGuide</p>
+              <h1 className="mx-auto mt-4 max-w-xl text-3xl font-bold leading-tight sm:text-4xl">
+                Learning through play starts here.
+              </h1>
+              <p className="mx-auto mt-4 max-w-xl text-sm leading-6 text-[#536c73] sm:text-base">
+                Sign in to find activities and recommendations, or create an account as a caregiver or content provider.
+              </p>
+              <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+                <Link href="/login" className="inline-flex min-h-11 items-center justify-center rounded-md border border-[#176b5b] bg-[#176b5b] px-6 text-sm font-semibold text-white no-underline transition hover:bg-[#115648]">
+                  Log in
+                </Link>
+                <Link href="/register" className="inline-flex min-h-11 items-center justify-center rounded-md border border-[#b6ccd1] bg-white px-6 text-sm font-semibold text-[#304b54] no-underline transition hover:bg-[#eef5f5]">
+                  Register
+                </Link>
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />

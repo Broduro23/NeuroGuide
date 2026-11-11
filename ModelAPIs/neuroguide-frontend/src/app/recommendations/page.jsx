@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -19,6 +20,7 @@ const navigationItems = [
 ];
 
 const goalLabels = {
+  counting: "Counting",
   number_identification: "Number identification",
   number_size_discrimination: "Number size",
   letter_alphabet_knowledge: "Letters and alphabet",
@@ -46,7 +48,7 @@ function readableGoal(goal) {
 }
 
 function isGeneralMedia(item) {
-  return item?.general_media || ["audio", "video"].includes(item?.content_type);
+  return item?.general_media === true;
 }
 
 function formatAge(months) {
@@ -64,7 +66,7 @@ function MediaPlaceholder({ label, className = "" }) {
   );
 }
 
-export default function Recommendations() {
+function RecommendationsContent() {
   const router = useRouter();
   const [children, setChildren] = useState([]);
   const [selectedChildId, setSelectedChildId] = useState("");
@@ -368,4 +370,8 @@ export default function Recommendations() {
       </div>
     </div>
   );
+}
+
+export default function Recommendations() {
+  return <RoleGate><RecommendationsContent /></RoleGate>;
 }

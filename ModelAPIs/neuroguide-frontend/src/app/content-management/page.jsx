@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -29,6 +30,13 @@ const emptyForm = {
 const inputClasses =
   "w-full rounded-md border border-[#b6ccd1] bg-white px-3 py-2.5 text-sm text-[#183940] outline-none focus:border-[#287a71] focus:ring-2 focus:ring-[#287a71]/20";
 
+function isAssessmentPending(content) {
+  return content.assessment_status === "pending" || (
+    ["audio", "video"].includes(content.content_type) &&
+    ["pending", "processing"].includes(content.processing_status)
+  );
+}
+
 function formatAgeRange(minimum, maximum) {
   return `${minimum}–${maximum} months`;
 }
@@ -41,7 +49,7 @@ function StatusBadge({ children, positive = false }) {
   );
 }
 
-export default function ContentManagement() {
+function ContentManagementContent() {
   const router = useRouter();
   const [contents, setContents] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -50,6 +58,7 @@ export default function ContentManagement() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [userRole, setUserRole] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -67,9 +76,11 @@ export default function ContentManagement() {
       };
     }
 
-    apiFetch("content/")
-      .then((records) => {
-        if (active) setContents(records);
+    Promise.all([apiFetch("content/"), apiFetch("profile/")])
+      .then(([records, profile]) => {
+        if (!active) return;
+        setContents(records);
+        setUserRole(profile.role);
       })
       .catch((loadError) => {
         if (active) setError(loadError.message);
@@ -84,11 +95,8 @@ export default function ContentManagement() {
   }, [router]);
 
   useEffect(() => {
-    const hasQueuedMedia = contents.some((item) =>
-      ["audio", "video"].includes(item.content_type) &&
-      ["pending", "processing"].includes(item.processing_status),
-    );
-    if (!hasQueuedMedia) return undefined;
+    const hasPendingAssessment = contents.some(isAssessmentPending);
+    if (!hasPendingAssessment) return undefined;
 
     const intervalId = window.setInterval(() => {
       apiFetch("content/").then(setContents).catch(() => {});
@@ -234,6 +242,42 @@ export default function ContentManagement() {
     }
   }
 
+  async function flagContent(content) {
+    setBusyId(content.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`content/${content.id}/flag/`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Flagged for admin review from the content library." }),
+      });
+      setContents((current) => current.map((item) => item.id === content.id ? { ...item, moderation_status: response.moderation_status, recommendation_eligible: false } : item));
+      setNotice(response.message);
+    } catch (flagError) {
+      setError(flagError.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function moderateContent(content, action) {
+    setBusyId(content.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`content/${content.id}/moderate/`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+      setContents((current) => current.map((item) => item.id === content.id ? response.content : item));
+      setNotice(response.message);
+    } catch (moderationError) {
+      setError(moderationError.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-[#f3f8f9] text-[#183940]">
       <Navbar />
@@ -252,7 +296,7 @@ export default function ContentManagement() {
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#647d83]">Learning resources</p>
                   <h2 className="mt-1 text-xl font-bold">{editingId ? "Edit content" : "Add content"}</h2>
-                  <p className="mt-1 text-xs leading-5 text-[#647d83]">Text is assessed for safety and developmental areas. Safe audio and video are offered as general age-appropriate activities without developmental labels.</p>
+                  <p className="mt-1 text-xs leading-5 text-[#647d83]">Text and safe media transcripts are assessed for developmental areas and suitability. Media without an assessable transcript cannot be goal-ranked.</p>
                 </div>
                 {editingId ? <button type="button" onClick={resetForm} className="rounded-md border border-[#b6ccd1] px-3 py-2 text-xs text-[#36535b] hover:bg-[#eef5f5]">Cancel edit</button> : null}
               </div>
@@ -333,6 +377,16 @@ export default function ContentManagement() {
                             <StatusBadge positive={content.recommendation_eligible}>{content.recommendation_eligible ? "Eligible" : "Not eligible"}</StatusBadge>
                           </div>
                           <p className="mt-1 text-xs text-[#647d83]">{content.content_type} · Ages {formatAgeRange(content.age_min, content.age_max)}</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <StatusBadge positive={content.moderation_status === "clear"}>Moderation: {content.moderation_status || "clear"}</StatusBadge>
+                            {content.moderation_status === "flagged" ? <StatusBadge>{content.flag_count || 0} flag(s)</StatusBadge> : null}
+                          </div>
+                          {userRole === "admin" && content.flag_reasons?.length ? (
+                            <div className="mt-3 rounded-lg border border-[#ead6aa] bg-[#fffaf0] p-3 text-xs text-[#6d5730]">
+                              <strong>Flag reasons</strong>
+                              <ul className="mt-1 list-disc pl-5">{content.flag_reasons.map((reason, index) => <li key={`${content.id}-flag-${index}`}>{reason}</li>)}</ul>
+                            </div>
+                          ) : null}
                           <p className="mt-3 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-[#445f67]">
                             {content.text || content.transcript || (content.media_file ? "Uploaded media. Open Media Testing to review its transcription and safety results." : "")}
                           </p>
@@ -345,17 +399,62 @@ export default function ContentManagement() {
                             <StatusBadge positive={content.safety_label === "safe"}>Safety: {content.safety_label}</StatusBadge>
                             <StatusBadge positive={content.assessment_status === "completed"}>Assessment: {content.assessment_status}</StatusBadge>
                           </div>
-                          {content.content_type === "text" && content.recommendation_eligible && content.developmental_scores ? (
-                            <p className="mt-3 text-xs text-[#647d83]">
-                              Developmental areas: {Object.keys(content.developmental_scores).join(", ") || "None returned"}
-                            </p>
+                          {content.assessment_status === "completed" && (
+                            Object.keys(content.suitability_probabilities || {}).length > 0 ||
+                            Object.keys(content.developmental_scores || {}).length > 0
+                          ) ? (
+                            <details className="mt-3 rounded-lg border border-[#c9dadd] bg-[#f8fbfc] px-3 py-2">
+                              <summary className="cursor-pointer text-xs font-semibold text-[#176b5b]">
+                                View model probabilities
+                              </summary>
+                              {content.suitability_label ? (
+                                <p className="mt-3 text-xs text-[#445f67]">
+                                  Suitability result: <strong>{content.suitability_label}</strong>
+                                </p>
+                              ) : null}
+                              {Object.keys(content.suitability_probabilities || {}).length > 0 ? (
+                                <div className="mt-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#647d83]">Suitability probabilities</p>
+                                  <ul className="mt-1 grid gap-x-4 gap-y-1 text-xs text-[#536c73] sm:grid-cols-3">
+                                    {Object.entries(content.suitability_probabilities).map(([label, probability]) => (
+                                      <li key={label} className="flex justify-between gap-2">
+                                        <span>{label}</span>
+                                        <strong>{(Number(probability) * 100).toFixed(1)}%</strong>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                              {Object.keys(content.developmental_scores || {}).length > 0 ? (
+                                <div className="mt-3">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#647d83]">Developmental domain probabilities</p>
+                                  <ul className="mt-1 grid gap-x-4 gap-y-1 text-xs text-[#536c73] sm:grid-cols-2 lg:grid-cols-3">
+                                    {Object.entries(content.developmental_scores)
+                                      .sort((left, right) => Number(right[1]) - Number(left[1]))
+                                      .map(([domain, probability]) => (
+                                        <li key={domain} className="flex justify-between gap-2">
+                                          <span>{domain.replaceAll("_", " ")}</span>
+                                          <strong>{(Number(probability) * 100).toFixed(1)}%</strong>
+                                        </li>
+                                      ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                            </details>
                           ) : null}
                         </div>
                         <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+                          {content.moderation_status !== "flagged" && content.moderation_status !== "rejected" ? (
+                            <button type="button" onClick={() => flagContent(content)} disabled={busyId === content.id} className="rounded-md border border-[#c7aaaa] bg-white px-3 py-2 text-xs font-semibold text-[#854747] hover:bg-[#fff7f7] disabled:opacity-60">Flag</button>
+                          ) : null}
+                          {userRole === "admin" && content.moderation_status === "flagged" ? <>
+                            <button type="button" onClick={() => moderateContent(content, "clear")} disabled={busyId === content.id} className="rounded-md border border-[#a7d8c3] bg-white px-3 py-2 text-xs font-semibold text-[#176b4d] hover:bg-[#e7f5ee] disabled:opacity-60">Clear flag</button>
+                            <button type="button" onClick={() => moderateContent(content, "reject")} disabled={busyId === content.id} className="rounded-md border border-[#c7aaaa] bg-white px-3 py-2 text-xs font-semibold text-[#854747] hover:bg-[#fff7f7] disabled:opacity-60">Reject</button>
+                          </> : null}
                           {content.content_type === "text" ? (
                             <button type="button" onClick={() => editContent(content)} className="rounded-md border border-[#b6ccd1] bg-white px-3 py-2 text-xs font-semibold text-[#36535b] hover:bg-[#eef5f5]">Edit</button>
                           ) : null}
-                          <button type="button" onClick={() => reassessContent(content.id)} disabled={busyId === content.id} className="rounded-md border border-[#b6ccd1] bg-white px-3 py-2 text-xs font-semibold text-[#36535b] hover:bg-[#eef5f5] disabled:opacity-60">{busyId === content.id ? "Working…" : "Reassess"}</button>
+                          <button type="button" onClick={() => reassessContent(content.id)} disabled={busyId === content.id || isAssessmentPending(content)} className="rounded-md border border-[#b6ccd1] bg-white px-3 py-2 text-xs font-semibold text-[#36535b] hover:bg-[#eef5f5] disabled:opacity-60">{busyId === content.id || isAssessmentPending(content) ? "Working…" : "Reassess"}</button>
                           <button type="button" onClick={() => deleteContent(content)} disabled={busyId === content.id} className="rounded-md border border-[#c7aaaa] bg-white px-3 py-2 text-xs font-semibold text-[#854747] hover:bg-[#fff7f7] disabled:opacity-60">Delete</button>
                         </div>
                       </div>
@@ -369,4 +468,8 @@ export default function ContentManagement() {
       </div>
     </div>
   );
+}
+
+export default function ContentManagement() {
+  return <RoleGate><ContentManagementContent /></RoleGate>;
 }
