@@ -2,6 +2,7 @@ import json
 import logging
 import subprocess
 import tempfile
+import time
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -151,6 +152,7 @@ def _classify_frames(frame_paths):
 
 
 def _extract_and_transcribe(media_path, directory):
+    started_at = time.perf_counter()
     audio_path = Path(directory) / 'audio.mp3'
     subprocess.run(
         [
@@ -168,7 +170,14 @@ def _extract_and_transcribe(media_path, directory):
         beam_size=settings.WHISPER_BEAM_SIZE,
         vad_filter=False,
     )
-    return ' '.join(segment.text.strip() for segment in segments).strip()
+    transcript = ' '.join(segment.text.strip() for segment in segments).strip()
+    logger.info(
+        'Media transcription completed for %s in %.2fs (%d characters)',
+        Path(media_path).name,
+        time.perf_counter() - started_at,
+        len(transcript),
+    )
+    return transcript
 
 
 def _assess_audio(media_path, directory):
@@ -184,6 +193,7 @@ def _assess_audio(media_path, directory):
 
     from .safety_api import predict_safety_for_full_text
 
+    safety_started_at = time.perf_counter()
     text_label, text_confidence = predict_safety_for_full_text(transcript)
     normalized_label = str(text_label).strip().lower()
     if normalized_label not in {'safe', 'unsafe'}:
@@ -192,19 +202,30 @@ def _assess_audio(media_path, directory):
         'label': normalized_label,
         'confidence': float(text_confidence),
     }
+    logger.info(
+        'Transcript safety check completed for %s in %.2fs (%d characters): %s',
+        Path(media_path).name,
+        time.perf_counter() - safety_started_at,
+        len(transcript),
+        normalized_label,
+    )
     return transcript, audio_result, normalized_label == 'unsafe'
 
 
 def process_media_content(content):
     """Inspect uploaded media and persist fail-closed assessment results."""
+    processing_started_at = time.perf_counter()
     content.processing_status = Content.ProcessingStatus.PROCESSING
     content.safety_label = Content.SafetyStatus.PENDING
     content.assessment_status = Content.AssessmentStatus.PENDING
     content.recommendation_eligible = False
     content.developmental_scores = {}
+    content.suitability_label = ""
+    content.suitability_probabilities = {}
     content.save(update_fields=[
         'processing_status', 'safety_label', 'assessment_status',
-        'recommendation_eligible', 'developmental_scores', 'updated_at',
+        'recommendation_eligible', 'developmental_scores',
+        'suitability_label', 'suitability_probabilities', 'updated_at',
     ])
 
     visual_result = {'status': 'not_applicable', 'frames': []}
@@ -310,14 +331,84 @@ def process_media_content(content):
             content.save()
             return content
 
-        content.safety_label = Content.SafetyStatus.SAFE
-        # Recommend media as general age-appropriate activities. Transcript
-        # labels can misrepresent the goals of a complete audio/video resource.
-        content.assessment_status = Content.AssessmentStatus.COMPLETED
-        content.developmental_scores = {}
-        content.recommendation_eligible = True
+        logger.info(
+            'Media safety checks completed for content ID %s in %.2fs; '
+            'transcript length=%d characters',
+            content.pk,
+            time.perf_counter() - processing_started_at,
+            len(transcript),
+        )
 
+        content.safety_label = Content.SafetyStatus.SAFE
+        # Publish finished safety and frame results while the transcript
+        # developmental model continues running; keep the job in progress.
+        content.save(update_fields=[
+            'safety_label',
+            'safety_confidence',
+            'transcript',
+            'visual_assessment',
+            'audio_assessment',
+            'safety_assessment',
+            'processing_status',
+            'assessment_status',
+            'recommendation_eligible',
+            'updated_at',
+        ])
+
+        if not transcript.strip():
+            content.assessment_status = Content.AssessmentStatus.FAILED
+            content.processing_status = Content.ProcessingStatus.COMPLETED
+            content.developmental_scores = {}
+            content.suitability_label = ""
+            content.suitability_probabilities = {}
+            content.recommendation_eligible = False
+            content.save()
+            return content
+
+        try:
+            from .dev_assessment import predict_developmental_probabilities
+            from .developmental_contract import normalize_developmental_result
+
+            developmental_started_at = time.perf_counter()
+            logger.info(
+                'Transcript developmental assessment started for content ID %s',
+                content.pk,
+            )
+            prediction = predict_developmental_probabilities(transcript)
+            (
+                content.developmental_scores,
+                content.suitability_label,
+                content.suitability_probabilities,
+            ) = normalize_developmental_result(prediction)
+            logger.info(
+                'Transcript developmental assessment completed for content ID %s '
+                'in %.2fs',
+                content.pk,
+                time.perf_counter() - developmental_started_at,
+            )
+        except Exception:
+            logger.exception(
+                'Transcript developmental assessment failed for content ID %s',
+                content.pk,
+            )
+            content.assessment_status = Content.AssessmentStatus.FAILED
+            content.processing_status = Content.ProcessingStatus.COMPLETED
+            content.developmental_scores = {}
+            content.suitability_label = ""
+            content.suitability_probabilities = {}
+            content.recommendation_eligible = False
+            content.save()
+            return content
+
+        content.assessment_status = Content.AssessmentStatus.COMPLETED
         content.processing_status = Content.ProcessingStatus.COMPLETED
+        content.recommendation_eligible = (
+            content.suitability_label
+            in {
+                Content.SuitabilityStatus.SUITABLE,
+                Content.SuitabilityStatus.PARTIALLY_SUITABLE,
+            }
+        )
         content.save()
         return content
 

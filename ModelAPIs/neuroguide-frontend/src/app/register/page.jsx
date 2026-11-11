@@ -28,6 +28,7 @@ export default function Register() {
           email: formData.get("email"),
           password: formData.get("password"),
           password2: formData.get("password2"),
+          role: formData.get("role"),
         }),
       });
       setCreated(true);
@@ -56,6 +57,13 @@ export default function Register() {
             </div>
 
             <form className="space-y-4" onSubmit={handleSubmit}>
+              <div className="space-y-1.5">
+                <label htmlFor="role" className="block text-sm font-semibold text-[#304b54]">Account type</label>
+                <select id="role" name="role" required defaultValue="caregiver" className="w-full rounded-md border border-[#b6ccd1] bg-white px-3 py-2.5 text-sm">
+                  <option value="caregiver">Caregiver / Parent</option>
+                  <option value="content_provider">Content Provider</option>
+                </select>
+              </div>
               <div className="space-y-1.5">
                 <label
                   htmlFor="username"

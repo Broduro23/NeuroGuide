@@ -1,12 +1,18 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from .models import ChildProfile
+from .models import ChildProfile, UserRole
+from .developmental_domains import DEVELOPMENTAL_LABELS
 
 from rest_framework import serializers
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    role = serializers.ChoiceField(
+        choices=[UserRole.Role.CAREGIVER, UserRole.Role.CONTENT_PROVIDER],
+        default=UserRole.Role.CAREGIVER,
+        write_only=True,
+    )
     password = serializers.CharField(
         write_only=True,
         min_length=8,
@@ -26,6 +32,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             "email",
             "password",
             "password2",
+            "role",
         ]
         read_only_fields = ["id"]
 
@@ -40,6 +47,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        role = attrs.get("role", UserRole.Role.CAREGIVER)
+        if role not in {UserRole.Role.CAREGIVER, UserRole.Role.CONTENT_PROVIDER}:
+            raise serializers.ValidationError({"role": "Choose Caregiver/Parent or Content Provider."})
         if attrs["password"] != attrs["password2"]:
             raise serializers.ValidationError({
                 "password2": "The passwords do not match."
@@ -63,15 +73,25 @@ class RegisterSerializer(serializers.ModelSerializer):
         validated_data.pop("password2")
 
         password = validated_data.pop("password")
+        role = validated_data.pop("role", UserRole.Role.CAREGIVER)
 
         user = User(**validated_data)
         user.set_password(password)
         user.save()
+        UserRole.objects.create(user=user, role=role)
 
         return user
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    role = serializers.SerializerMethodField()
+
+    def get_role(self, user):
+        if user.is_superuser or user.is_staff:
+            return UserRole.Role.ADMIN
+        role, _ = UserRole.objects.get_or_create(user=user)
+        return role.role
+
     class Meta:
         model = User
         fields = [
@@ -80,6 +100,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "email",
             "first_name",
             "last_name",
+            "role",
         ]
         read_only_fields = ["id", "username"]
 
@@ -144,7 +165,20 @@ class ChildProfileSerializer(serializers.ModelSerializer):
                 "Each learning goal must be a non-empty string."
             )
 
-        return [item.strip() for item in value]
+        goals = [item.strip() for item in value]
+        invalid_goals = [
+            goal for goal in goals
+            if goal not in DEVELOPMENTAL_LABELS
+        ]
+        if invalid_goals:
+            raise serializers.ValidationError(
+                f"Unknown developmental goals: {invalid_goals}"
+            )
+        if len(set(goals)) != len(goals):
+            raise serializers.ValidationError(
+                "Duplicate learning goals are not allowed."
+            )
+        return goals
 
     def validate_interests(self, value):
         if not isinstance(value, list):

@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useEffect, useState } from "react";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -30,7 +31,7 @@ function formatAgeRange(minimum, maximum) {
   return `${format(minimum)}–${format(maximum)}`;
 }
 
-function ActivityContent() {
+function ActivityPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const historyId = searchParams.get("historyId");
@@ -41,6 +42,7 @@ function ActivityContent() {
   const [isCompleting, setIsCompleting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -61,7 +63,7 @@ function ActivityContent() {
         if (!contentId) {
           const availableContent = await apiFetch("content/");
           if (active) {
-            setContents(availableContent.filter((item) => item.safety_label === "safe"));
+            setContents(availableContent.filter((item) => item.safety_label === "safe" && item.moderation_status === "clear"));
           }
           return;
         }
@@ -70,8 +72,8 @@ function ActivityContent() {
           `content/${encodeURIComponent(contentId)}/`,
         );
         if (!active) return;
-        if (activityContent.safety_label !== "safe") {
-          setError("This activity is unavailable because it has not passed safety review.");
+        if (activityContent.safety_label !== "safe" || activityContent.moderation_status !== "clear") {
+          setError("This activity is unavailable because it has not passed safety and moderation review.");
           return;
         }
         setContent(activityContent);
@@ -135,6 +137,22 @@ function ActivityContent() {
     }
   }
 
+  async function flagContent() {
+    if (!content) return;
+    setError("");
+    try {
+      const response = await apiFetch(`content/${content.id}/flag/`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Flagged by an app user for admin review." }),
+      });
+      setNotice(response.message);
+      setContent(null);
+      setError("This content is hidden while it is reviewed.");
+    } catch (flagError) {
+      setError(flagError.message);
+    }
+  }
+
   const hasSelection = Boolean(contentId);
 
   return (
@@ -161,6 +179,7 @@ function ActivityContent() {
           ) : !hasSelection ? (
             <div className="mx-auto w-full max-w-6xl px-4 pb-10 pt-7 sm:px-8">
               {error ? <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-white p-4 text-sm text-red-700">{error}</p> : null}
+              {notice ? <p role="status" className="mb-4 rounded-lg border border-[#a7d8c3] bg-white p-4 text-sm text-[#176b4d]">{notice}</p> : null}
               <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#647d83]">Learning activity catalog</p>
@@ -235,6 +254,10 @@ function ActivityContent() {
                     </p>
                   </> : null}
                 </div>
+                <div className="mt-5 border-t border-[#dbe9eb] pt-4">
+                  <button type="button" onClick={flagContent} className="rounded-md border border-[#c7aaaa] px-3 py-2 text-xs font-semibold text-[#854747] hover:bg-[#fff7f7]">Flag this content</button>
+                  <p className="mt-2 text-xs text-[#647d83]">Flagged content is immediately hidden from parent activities and recommendations while an admin reviews it.</p>
+                </div>
               </section>
 
               {historyId ? <section aria-labelledby="activity-progress-title" className="mx-auto mt-6 max-w-3xl border-t border-[#c9dadd] pt-5">
@@ -274,7 +297,7 @@ function ActivityContent() {
   );
 }
 
-export default function Activity() {
+function ActivityContent() {
   return (
     <Suspense
       fallback={
@@ -283,7 +306,11 @@ export default function Activity() {
         </div>
       }
     >
-      <ActivityContent />
+      <ActivityPageContent />
     </Suspense>
   );
+}
+
+export default function Activity() {
+  return <RoleGate><ActivityContent /></RoleGate>;
 }

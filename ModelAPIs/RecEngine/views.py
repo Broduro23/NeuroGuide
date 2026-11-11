@@ -8,6 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RegisterSerializer, UserProfileSerializer, ChildProfileSerializer
 from django.db import transaction
+from django.utils import timezone
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from .models import (
@@ -15,8 +16,19 @@ from .models import (
     Content,
     RecommendationActivity,
     RecommendationHistory,
+    ContentFlag,
+    UserNotification,
 )
 from .recommendation_engine import recommend_content
+from .developmental_contract import normalize_developmental_result
+from .permissions import (
+    AdminOnly,
+    ApplicationUserAccess,
+    CaregiverAccess,
+    ContentProviderAccess,
+    user_role,
+)
+from .models import UserRole
 
 import logging
 
@@ -42,9 +54,11 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
 class ChildProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ChildProfileSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CaregiverAccess]
 
     def get_queryset(self):
+        if user_role(self.request.user) == UserRole.Role.ADMIN:
+            return ChildProfile.objects.all()
         return ChildProfile.objects.filter(
             caregiver=self.request.user
         )
@@ -54,6 +68,8 @@ class ChildProfileViewSet(viewsets.ModelViewSet):
 
 # Create your views here.
 class DevelopmentalPredictionView(APIView):
+
+    permission_classes = [ContentProviderAccess]
 
     parser_classes = [
         JSONParser,
@@ -107,9 +123,10 @@ class DevelopmentalPredictionView(APIView):
         try:
             from .dev_assessment import predict_developmental_probabilities
 
-            probabilities = predict_developmental_probabilities(text)
-
-            # Use a configurable threshold for predicted labels.
+            result = predict_developmental_probabilities(text)
+            probabilities, _suitability, suitability_probabilities = (
+                normalize_developmental_result(result)
+            )
             threshold = 0.5
 
             predicted_domains = [
@@ -124,11 +141,14 @@ class DevelopmentalPredictionView(APIView):
                     "probabilities": probabilities,
                     "predicted_domains": predicted_domains,
                     "threshold": threshold,
+                    "suitability": result["suitability"],
+                    "suitability_probabilities": suitability_probabilities,
                 },
                 status=status.HTTP_200_OK,
             )
 
         except Exception:
+            logger.exception("Developmental prediction failed.")
             return Response(
                 {
                     "error": "Prediction failed. Check the model configuration and server logs."
@@ -137,6 +157,8 @@ class DevelopmentalPredictionView(APIView):
             )
 
 class SafetyPredictionView(APIView):
+
+    permission_classes = [ContentProviderAccess]
     parser_classes = [
         JSONParser,
         MultiPartParser,
@@ -207,7 +229,7 @@ class SafetyPredictionView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-def serialize_content(content):
+def serialize_content(content, include_flag_details=False):
     """Convert a Content instance into a JSON-ready dictionary."""
 
     return {
@@ -228,9 +250,18 @@ def serialize_content(content):
         "visual_assessment": content.visual_assessment,
         "audio_assessment": content.audio_assessment,
         "developmental_scores": content.developmental_scores,
+        "suitability_label": content.get_suitability_label_display() or None,
+        "suitability_probabilities": content.suitability_probabilities,
         "assessment_status": content.assessment_status,
         "processing_status": content.processing_status,
         "recommendation_eligible": content.recommendation_eligible,
+        "moderation_status": content.moderation_status,
+        "flag_count": content.flags.count(),
+        "created_by": content.created_by_id,
+        "flag_reasons": (
+            [flag.reason for flag in content.flags.all() if flag.reason]
+            if include_flag_details else []
+        ),
         "created_at": content.created_at.isoformat(),
         "updated_at": content.updated_at.isoformat(),
     }
@@ -334,51 +365,6 @@ def normalize_safety_result(result):
     return label, confidence, details
 
 
-def normalize_developmental_result(result):
-    """
-    Normalize developmental-model predictions into a score dictionary.
-
-    Expected example:
-        {
-            "number_identification": 0.92,
-            "working_memory": 0.78
-        }
-
-    If your model returns a nested dictionary, adapt this function
-    to extract its actual score mapping.
-    """
-
-    if not isinstance(result, dict):
-        raise ValueError(
-            "Developmental model must return a dictionary of scores."
-        )
-
-    # Support a common nested response format.
-    scores = result.get("developmental_scores", result)
-
-    if not isinstance(scores, dict) or not scores:
-        raise ValueError("No developmental scores were returned.")
-
-    normalized = {}
-
-    for label, value in scores.items():
-        try:
-            score = float(value)
-        except (TypeError, ValueError, OverflowError):
-            raise ValueError(
-                f"Invalid developmental score for '{label}'."
-            )
-
-        if not 0 <= score <= 1:
-            raise ValueError(
-                f"Developmental score for '{label}' must be between 0 and 1."
-            )
-
-        normalized[label] = score
-
-    return normalized
-
-
 def assess_content_record(content):
     """Run safety and developmental assessment and persist the results."""
     from .dev_assessment import predict_developmental_probabilities
@@ -388,6 +374,8 @@ def assess_content_record(content):
     content.safety_confidence = None
     content.safety_assessment = {}
     content.developmental_scores = {}
+    content.suitability_label = ""
+    content.suitability_probabilities = {}
     content.assessment_status = Content.AssessmentStatus.PENDING
     content.recommendation_eligible = False
     content.save()
@@ -411,11 +399,19 @@ def assess_content_record(content):
         developmental_result = predict_developmental_probabilities(
             content.text
         )
-        content.developmental_scores = normalize_developmental_result(
-            developmental_result
-        )
+        (
+            content.developmental_scores,
+            content.suitability_label,
+            content.suitability_probabilities,
+        ) = normalize_developmental_result(developmental_result)
         content.assessment_status = Content.AssessmentStatus.COMPLETED
-        content.recommendation_eligible = bool(content.developmental_scores)
+        content.recommendation_eligible = (
+            content.suitability_label
+            in {
+                Content.SuitabilityStatus.SUITABLE,
+                Content.SuitabilityStatus.PARTIALLY_SUITABLE,
+            }
+        )
 
         with transaction.atomic():
             content.save()
@@ -432,6 +428,8 @@ def assess_content_record(content):
                 "safety_confidence",
                 "safety_assessment",
                 "developmental_scores",
+                "suitability_label",
+                "suitability_probabilities",
                 "assessment_status",
                 "recommendation_eligible",
                 "updated_at",
@@ -448,7 +446,9 @@ class RecommendationView(APIView):
     POST /api/content/ -> Submit and assess content.
     """
 
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        permission = ApplicationUserAccess if self.request.method == "GET" else ContentProviderAccess
+        return [permission()]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request):
@@ -458,10 +458,21 @@ class RecommendationView(APIView):
         Return all stored content records for authenticated library managers.
         """
 
-        queryset = Content.objects.all()
+        role = user_role(request.user)
+        queryset = Content.objects.select_related("created_by").all()
+        if role == UserRole.Role.CONTENT_PROVIDER:
+            queryset = queryset.filter(created_by=request.user)
+        elif role != UserRole.Role.ADMIN:
+            queryset = queryset.filter(
+                moderation_status=Content.ModerationStatus.CLEAR,
+                safety_label=Content.SafetyStatus.SAFE,
+            )
 
         results = [
-            serialize_content(item)
+            serialize_content(
+                item,
+                include_flag_details=role == UserRole.Role.ADMIN,
+            )
             for item in queryset
         ]
 
@@ -548,7 +559,7 @@ class RecommendationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Persist the submission before running expensive ML inference.
+        # Persist content before queueing expensive model inference.
         content = Content.objects.create(
             title=title,
             text=text,
@@ -598,31 +609,35 @@ class RecommendationView(APIView):
                 status=status.HTTP_202_ACCEPTED,
             )
 
+        from .tasks import assess_text_content
+
+        content.processing_status = Content.ProcessingStatus.PENDING
+        content.save(update_fields=['processing_status', 'updated_at'])
         try:
-            assess_content_record(content)
+            assess_text_content.delay(content.pk)
         except Exception:
+            logger.exception('Could not enqueue text assessment %s', content.pk)
+            content.processing_status = Content.ProcessingStatus.FAILED
+            content.assessment_status = Content.AssessmentStatus.FAILED
+            content.safety_label = Content.SafetyStatus.INCONCLUSIVE
+            content.safety_assessment = {
+                'error': 'Text assessment could not be queued.'
+            }
+            content.save()
             return Response(
                 {
-                    "error": (
-                        "Content was saved, but its assessment failed. "
-                        "It is not eligible for recommendations."
-                    ),
-                    "content_id": content.pk,
+                    'error': 'Text was saved but could not be queued for assessment.',
+                    'content_id': content.pk,
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        message = (
-            "Content submitted and assessed successfully."
-            if content.recommendation_eligible
-            else "Content was assessed but is not eligible for recommendations."
-        )
         return Response(
             {
-                "message": message,
+                "message": "Text content uploaded and queued for assessment.",
                 "content": serialize_content(content),
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_202_ACCEPTED,
         )
 
 class ContentDetailView(APIView):
@@ -634,7 +649,9 @@ class ContentDetailView(APIView):
     DELETE /api/content/<id>/
     """
 
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        permission = ApplicationUserAccess if self.request.method == "GET" else ContentProviderAccess
+        return [permission()]
 
     def get_object(self, content_id):
         return get_object_or_404(
@@ -645,6 +662,16 @@ class ContentDetailView(APIView):
     def get(self, request, content_id):
         content = self.get_object(content_id)
 
+        role = user_role(request.user)
+        if role == UserRole.Role.CONTENT_PROVIDER:
+            if content.created_by_id != request.user.pk:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        elif role != UserRole.Role.ADMIN and (
+            content.safety_label != Content.SafetyStatus.SAFE
+            or content.moderation_status != Content.ModerationStatus.CLEAR
+        ):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
         return Response(
             serialize_content(content),
             status=status.HTTP_200_OK,
@@ -652,6 +679,11 @@ class ContentDetailView(APIView):
 
     def patch(self, request, content_id):
         content = self.get_object(content_id)
+        if (
+            user_role(request.user) != UserRole.Role.ADMIN
+            and content.created_by_id != request.user.pk
+        ):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         allowed_fields = {
             "title",
@@ -713,7 +745,7 @@ class ContentDetailView(APIView):
         # invalidates previous results and eligibility.
         reassess = any(
             field in updated
-            for field in ("text", "age_min", "age_max")
+            for field in ("text", "age_min", "age_max", "content_type")
         )
 
         for field, value in updated.items():
@@ -742,6 +774,8 @@ class ContentDetailView(APIView):
             content.safety_confidence = None
             content.safety_assessment = {}
             content.developmental_scores = {}
+            content.suitability_label = ""
+            content.suitability_probabilities = {}
             content.assessment_status = (
                 Content.AssessmentStatus.PENDING
             )
@@ -763,6 +797,11 @@ class ContentDetailView(APIView):
 
     def delete(self, request, content_id):
         content = self.get_object(content_id)
+        if (
+            user_role(request.user) != UserRole.Role.ADMIN
+            and content.created_by_id != request.user.pk
+        ):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         content.delete()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -771,10 +810,15 @@ class ContentDetailView(APIView):
 class ContentAssessmentView(APIView):
     """Re-run safety and developmental assessment for a stored record."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ContentProviderAccess]
 
     def post(self, request, content_id):
         content = get_object_or_404(Content, pk=content_id)
+        if (
+            user_role(request.user) != UserRole.Role.ADMIN
+            and content.created_by_id != request.user.pk
+        ):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         if content.content_type in {
             Content.ContentType.VIDEO,
@@ -785,6 +829,9 @@ class ContentAssessmentView(APIView):
             content.safety_label = Content.SafetyStatus.PENDING
             content.assessment_status = Content.AssessmentStatus.PENDING
             content.processing_status = Content.ProcessingStatus.PENDING
+            content.developmental_scores = {}
+            content.suitability_label = ""
+            content.suitability_probabilities = {}
             content.recommendation_eligible = False
             content.save()
             try:
@@ -812,33 +859,210 @@ class ContentAssessmentView(APIView):
                 status=status.HTTP_202_ACCEPTED,
             )
 
+        content.safety_label = Content.SafetyStatus.PENDING
+        content.safety_confidence = None
+        content.safety_assessment = {}
+        content.developmental_scores = {}
+        content.suitability_label = ""
+        content.suitability_probabilities = {}
+        content.assessment_status = Content.AssessmentStatus.PENDING
+        content.processing_status = Content.ProcessingStatus.PENDING
+        content.recommendation_eligible = False
+        content.save()
+
+        from .tasks import assess_text_content
+
         try:
-            assess_content_record(content)
+            assess_text_content.delay(content.pk)
         except Exception:
+            logger.exception('Could not enqueue text reassessment %s', content.pk)
+            content.processing_status = Content.ProcessingStatus.FAILED
+            content.assessment_status = Content.AssessmentStatus.FAILED
+            content.safety_label = Content.SafetyStatus.INCONCLUSIVE
+            content.safety_assessment = {
+                'error': 'Text reassessment could not be queued.'
+            }
+            content.save()
             return Response(
-                {
-                    "error": "Content assessment failed.",
-                    "content_id": content.pk,
-                    "assessment_status": content.assessment_status,
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {'error': 'Text could not be queued for reassessment.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         return Response(
             {
-                "message": (
-                    "Content reassessed successfully."
-                    if content.recommendation_eligible
-                    else "Content was assessed but is not eligible for recommendations."
-                ),
+                "message": "Text reassessment queued.",
                 "content": serialize_content(content),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class ContentFlagView(APIView):
+    """Allow any authenticated user to flag an item for admin review."""
+    permission_classes = [ApplicationUserAccess]
+
+    def post(self, request, content_id):
+        reason = request.data.get("reason", "")
+        if not isinstance(reason, str) or len(reason) > 1000:
+            return Response(
+                {"error": "reason must be text of at most 1000 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            content = get_object_or_404(
+                Content.objects.select_for_update(), pk=content_id
+            )
+            flag, created = ContentFlag.objects.get_or_create(
+                content=content,
+                reporter=request.user,
+                defaults={"reason": reason.strip()},
+            )
+            if (
+                not created
+                and flag.resolution != ContentFlag.Resolution.PENDING
+                and content.moderation_status != Content.ModerationStatus.REJECTED
+            ):
+                flag.reason = reason.strip()
+                flag.resolution = ContentFlag.Resolution.PENDING
+                flag.resolved_by = None
+                flag.resolved_at = None
+                flag.save(update_fields=[
+                    "reason", "resolution", "resolved_by", "resolved_at"
+                ])
+                created = True
+            if created and content.moderation_status != Content.ModerationStatus.REJECTED:
+                content.moderation_status = Content.ModerationStatus.FLAGGED
+                content.recommendation_eligible = False
+                content.save(update_fields=[
+                    "moderation_status", "recommendation_eligible", "updated_at"
+                ])
+                if content.created_by_id:
+                    UserNotification.objects.create(
+                        recipient=content.created_by,
+                        content=content,
+                        title="Content flagged for review",
+                        message=(
+                            f'“{content.title}” was flagged and hidden from parent '
+                            "activities and recommendations while an admin reviews it."
+                        ),
+                    )
+
+        return Response(
+            {
+                "message": (
+                    "Content flagged for review. It is hidden from activities and recommendations."
+                    if created else "You have already flagged this content."
+                ),
+                "moderation_status": content.moderation_status,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class ContentModerationView(APIView):
+    """Admin decision for flagged content: clear it or reject it."""
+    permission_classes = [AdminOnly]
+
+    def post(self, request, content_id):
+        action = request.data.get("action")
+        note = request.data.get("note", "")
+        if action not in {"clear", "reject"}:
+            return Response(
+                {"error": "action must be 'clear' or 'reject'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(note, str) or len(note) > 1000:
+            return Response(
+                {"error": "note must be text of at most 1000 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            content = get_object_or_404(
+                Content.objects.select_for_update(), pk=content_id
+            )
+            now = timezone.now()
+            resolution = (
+                ContentFlag.Resolution.CLEARED
+                if action == "clear"
+                else ContentFlag.Resolution.REJECTED
+            )
+            ContentFlag.objects.filter(
+                content=content,
+                resolution=ContentFlag.Resolution.PENDING,
+            ).update(
+                resolution=resolution,
+                resolved_by=request.user,
+                resolved_at=now,
+            )
+            content.moderation_status = (
+                Content.ModerationStatus.CLEAR
+                if action == "clear"
+                else Content.ModerationStatus.REJECTED
+            )
+            content.recommendation_eligible = (
+                action == "clear"
+                and content.safety_label == Content.SafetyStatus.SAFE
+                and content.assessment_status == Content.AssessmentStatus.COMPLETED
+                and content.suitability_label in {
+                    Content.SuitabilityStatus.SUITABLE,
+                    Content.SuitabilityStatus.PARTIALLY_SUITABLE,
+                }
+                and bool(content.developmental_scores)
+            )
+            content.save(update_fields=[
+                "moderation_status", "recommendation_eligible", "updated_at"
+            ])
+            if content.created_by_id:
+                outcome = "cleared and restored" if action == "clear" else "rejected"
+                detail = f" Admin note: {note.strip()}" if note.strip() else ""
+                UserNotification.objects.create(
+                    recipient=content.created_by,
+                    content=content,
+                    title="Content moderation update",
+                    message=f'“{content.title}” was {outcome}.{detail}',
+                )
+
+        return Response(
+            {
+                "message": "Content rejected." if action == "reject" else "Content cleared.",
+                "content": serialize_content(content, include_flag_details=True),
             },
             status=status.HTTP_200_OK,
         )
 
+
+class UserNotificationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response([
+            {
+                "id": item.pk,
+                "title": item.title,
+                "message": item.message,
+                "content_id": item.content_id,
+                "created_at": item.created_at.isoformat(),
+                "read": item.read_at is not None,
+            }
+            for item in request.user.neuroguide_notifications.all()
+        ])
+
+    def post(self, request, notification_id):
+        notification = get_object_or_404(
+            UserNotification,
+            pk=notification_id,
+            recipient=request.user,
+        )
+        if notification.read_at is None:
+            notification.read_at = timezone.now()
+            notification.save(update_fields=["read_at"])
+        return Response({"id": notification.pk, "read": True})
+
 class ContentRecommendationView(APIView):
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CaregiverAccess]
 
 
     def post(self, request):
@@ -863,11 +1087,10 @@ class ContentRecommendationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        child = get_object_or_404(
-            ChildProfile,
-            pk=child_id,
-            caregiver=request.user,
-        )
+        children = ChildProfile.objects.all()
+        if user_role(request.user) != UserRole.Role.ADMIN:
+            children = children.filter(caregiver=request.user)
+        child = get_object_or_404(children, pk=child_id)
         learning_goals = child.learning_goals
         if not isinstance(learning_goals, list) or not learning_goals:
             return Response(
@@ -942,7 +1165,12 @@ def serialize_recommendation_history(history):
         Content.objects.filter(
             pk__in=recommendation_ids,
             safety_label=Content.SafetyStatus.SAFE,
+            moderation_status=Content.ModerationStatus.CLEAR,
             assessment_status=Content.AssessmentStatus.COMPLETED,
+            suitability_label__in=[
+                Content.SuitabilityStatus.SUITABLE,
+                Content.SuitabilityStatus.PARTIALLY_SUITABLE,
+            ],
             recommendation_eligible=True,
         ).values_list("pk", flat=True)
     )
@@ -981,14 +1209,13 @@ def serialize_recommendation_history(history):
 
 
 class RecommendationHistoryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CaregiverAccess]
 
     def get(self, request):
-        queryset = (
-            RecommendationHistory.objects.filter(caregiver=request.user)
-            .select_related("child")
-            .prefetch_related("activities")
-        )
+        histories = RecommendationHistory.objects.all()
+        if user_role(request.user) != UserRole.Role.ADMIN:
+            histories = histories.filter(caregiver=request.user)
+        queryset = histories.select_related("child").prefetch_related("activities")
 
         child_id = request.query_params.get("child_id")
         if child_id:
@@ -1000,10 +1227,10 @@ class RecommendationHistoryView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not ChildProfile.objects.filter(
-                pk=child_id,
-                caregiver=request.user,
-            ).exists():
+            children = ChildProfile.objects.all()
+            if user_role(request.user) != UserRole.Role.ADMIN:
+                children = children.filter(caregiver=request.user)
+            if not children.filter(pk=child_id).exists():
                 return Response(
                     {"error": "Child profile not found."},
                     status=status.HTTP_404_NOT_FOUND,
@@ -1018,14 +1245,13 @@ class RecommendationHistoryView(APIView):
 
 
 class RecommendationFeedbackView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CaregiverAccess]
 
     def post(self, request, history_id):
-        history = get_object_or_404(
-            RecommendationHistory,
-            pk=history_id,
-            caregiver=request.user,
-        )
+        histories = RecommendationHistory.objects.all()
+        if user_role(request.user) != UserRole.Role.ADMIN:
+            histories = histories.filter(caregiver=request.user)
+        history = get_object_or_404(histories, pk=history_id)
         data = request.data
         if not isinstance(data, dict):
             return Response(
@@ -1068,14 +1294,13 @@ class RecommendationFeedbackView(APIView):
 
 
 class RecommendationActivityView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CaregiverAccess]
 
     def post(self, request, history_id):
-        history = get_object_or_404(
-            RecommendationHistory,
-            pk=history_id,
-            caregiver=request.user,
-        )
+        histories = RecommendationHistory.objects.all()
+        if user_role(request.user) != UserRole.Role.ADMIN:
+            histories = histories.filter(caregiver=request.user)
+        history = get_object_or_404(histories, pk=history_id)
         data = request.data
         if not isinstance(data, dict):
             return Response(
@@ -1122,7 +1347,11 @@ class RecommendationActivityView(APIView):
             )
 
         content = Content.objects.filter(pk=content_id).first()
-        if content is None or content.safety_label != Content.SafetyStatus.SAFE:
+        if (
+            content is None
+            or content.safety_label != Content.SafetyStatus.SAFE
+            or content.moderation_status != Content.ModerationStatus.CLEAR
+        ):
             return Response(
                 {"error": "Activities must pass safety review before they can be opened."},
                 status=status.HTTP_400_BAD_REQUEST,

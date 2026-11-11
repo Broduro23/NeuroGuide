@@ -1,5 +1,6 @@
 "use client";
 
+import RoleGate from "../../components/RoleGate";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "../../components/navbar";
@@ -40,7 +41,7 @@ function Toggle({ name, label, defaultChecked = false }) {
   );
 }
 
-export default function Settings() {
+function SettingsContent() {
   const router = useRouter();
   const [saved, setSaved] = useState(false);
   const [account, setAccount] = useState({
@@ -63,10 +64,13 @@ export default function Settings() {
       };
     }
 
-    Promise.all([apiFetch("profile/"), apiFetch("children/")])
-      .then(([profile, children]) => {
+    apiFetch("profile/")
+      .then(async (profile) => {
         if (!active) return;
         setAccount(profile);
+        if (profile.role === "content_provider") return;
+        const children = await apiFetch("children/");
+        if (!active) return;
         setChildCount(children.length);
       })
       .catch((loadError) => {
@@ -208,19 +212,19 @@ export default function Settings() {
                     <p className="text-sm">Plan &amp; Billing</p>
                     <p className="mt-1 text-[10px] text-[#647d83]">No billing endpoint available</p>
                   </div>
-                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
+                  {account.role !== "content_provider" ? <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
                     <p className="text-sm">Child Profiles: <strong>{childCount}</strong></p>
                     <a href="/profile" className="mt-3 rounded-md border border-[#b6ccd1] bg-[#e7f0f2] px-3 py-1.5 text-[10px] text-[#36535b] no-underline hover:bg-[#dbe9eb]">
                       View Profiles
                     </a>
-                  </div>
-                  <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
+                  </div> : null}
+                  {account.role !== "content_provider" ? <div className="flex min-h-24 flex-col items-center justify-center rounded-lg border border-[#c9dadd] bg-white p-3 text-center">
                     <p className="text-sm">Recommendation History</p>
                     <p className="mt-1 text-[10px] text-[#647d83]">Available in the API</p>
                     <a href="/recommendations" className="mt-2 rounded-md border border-[#b6ccd1] bg-[#e7f0f2] px-3 py-1.5 text-[10px] text-[#36535b] no-underline hover:bg-[#dbe9eb]">
                       View Recommendations
                     </a>
-                  </div>
+                  </div> : null}
                 </section>
 
                 <div className="flex flex-col items-start gap-2">
@@ -240,4 +244,8 @@ export default function Settings() {
       </div>
     </div>
   );
+}
+
+export default function Settings() {
+  return <RoleGate><SettingsContent /></RoleGate>;
 }

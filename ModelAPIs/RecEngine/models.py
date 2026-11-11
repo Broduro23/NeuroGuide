@@ -2,6 +2,20 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.core.exceptions import ValidationError
+from django.contrib.auth.models import User
+
+
+class UserRole(models.Model):
+    class Role(models.TextChoices):
+        ADMIN = "admin", "Admin"
+        CAREGIVER = "caregiver", "Caregiver/Parent"
+        CONTENT_PROVIDER = "content_provider", "Content Provider"
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="role_profile")
+    role = models.CharField(max_length=32, choices=Role.choices, default=Role.CAREGIVER)
+
+    def __str__(self):
+        return f"{self.user.username}: {self.role}"
 
 
 class ChildProfile(models.Model):
@@ -30,6 +44,11 @@ class ChildProfile(models.Model):
 
 class Content(models.Model):
 
+    class SuitabilityStatus(models.TextChoices):
+        SUITABLE = "suitable", "Suitable"
+        PARTIALLY_SUITABLE = "partially_suitable", "Partially Suitable"
+        NOT_SUITABLE = "not_suitable", "Not Suitable"
+
     class SafetyStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         SAFE = "safe", "Safe"
@@ -46,6 +65,11 @@ class Content(models.Model):
         PROCESSING = "processing", "Processing"
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
+
+    class ModerationStatus(models.TextChoices):
+        CLEAR = "clear", "Clear"
+        FLAGGED = "flagged", "Flagged"
+        REJECTED = "rejected", "Rejected"
 
     class ContentType(models.TextChoices):
         TEXT = "text", "Text"
@@ -140,6 +164,19 @@ class Content(models.Model):
         blank=True,
     )
 
+    # Overall textual suitability predicted by the developmental model.
+    suitability_label = models.CharField(
+        max_length=24,
+        choices=SuitabilityStatus.choices,
+        blank=True,
+        default="",
+    )
+
+    suitability_probabilities = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
     # Developmental assessment status
     assessment_status = models.CharField(
         max_length=20,
@@ -157,6 +194,13 @@ class Content(models.Model):
     # Recommendation eligibility
     recommendation_eligible = models.BooleanField(
         default=False,
+    )
+
+    moderation_status = models.CharField(
+        max_length=16,
+        choices=ModerationStatus.choices,
+        default=ModerationStatus.CLEAR,
+        db_index=True,
     )
 
     # Account responsible for submitting the content
@@ -227,8 +271,16 @@ class Content(models.Model):
         # required safety and developmental assessments pass.
         if (
             self.safety_label != self.SafetyStatus.SAFE
+            or self.moderation_status != self.ModerationStatus.CLEAR
             or self.assessment_status
             != self.AssessmentStatus.COMPLETED
+            or self.suitability_label
+            not in {
+                self.SuitabilityStatus.SUITABLE,
+                self.SuitabilityStatus.PARTIALLY_SUITABLE,
+            }
+            or not isinstance(self.developmental_scores, dict)
+            or not self.developmental_scores
         ):
             self.recommendation_eligible = False
 
@@ -236,6 +288,70 @@ class Content(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class ContentFlag(models.Model):
+    class Resolution(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CLEARED = "cleared", "Cleared"
+        REJECTED = "rejected", "Rejected"
+
+    content = models.ForeignKey(
+        Content,
+        on_delete=models.CASCADE,
+        related_name="flags",
+    )
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="content_flags",
+    )
+    reason = models.TextField(blank=True, max_length=1000)
+    resolution = models.CharField(
+        max_length=16,
+        choices=Resolution.choices,
+        default=Resolution.PENDING,
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="resolved_content_flags",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content", "reporter"],
+                name="one_flag_per_user_content",
+            )
+        ]
+
+
+class UserNotification(models.Model):
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="neuroguide_notifications",
+    )
+    content = models.ForeignKey(
+        Content,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="notifications",
+    )
+    title = models.CharField(max_length=180)
+    message = models.TextField(max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class RecommendationHistory(models.Model):

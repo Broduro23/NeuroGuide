@@ -61,6 +61,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'config.urls'
+TEST_RUNNER = 'RecEngine.test_runner.ExcelDiscoverRunner'
 
 TEMPLATES = [
     {

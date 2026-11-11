@@ -3,6 +3,11 @@
 /models/devassessment
 /models/
 /model_cache/
+/test_results.xlsx
 .env
 .env.*
+/dev_assessment model/
+instruction.md
+/management/ 
+test_results.xlsx
 

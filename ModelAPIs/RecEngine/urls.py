@@ -9,12 +9,15 @@ from .views import (
     ChildProfileViewSet,
     ContentAssessmentView,
     ContentDetailView,
+    ContentFlagView,
+    ContentModerationView,
     LoginView,
     RecommendationActivityView,
     RecommendationFeedbackView,
     RecommendationHistoryView,
     RegisterView,
     UserProfileView,
+    UserNotificationView,
 )
 
 router = DefaultRouter()
@@ -43,6 +46,16 @@ urlpatterns = [
         "content/<int:content_id>/assess/",
         ContentAssessmentView.as_view(),
         name="content-assess",
+    ),
+    path(
+        "content/<int:content_id>/flag/",
+        ContentFlagView.as_view(),
+        name="content-flag",
+    ),
+    path(
+        "content/<int:content_id>/moderate/",
+        ContentModerationView.as_view(),
+        name="content-moderate",
     ),
     path(
         "content/<int:content_id>/",
@@ -74,6 +87,12 @@ urlpatterns = [
         "profile/",
         UserProfileView.as_view(),
         name="user-profile",
+    ),
+    path("notifications/", UserNotificationView.as_view(), name="notifications"),
+    path(
+        "notifications/<int:notification_id>/read/",
+        UserNotificationView.as_view(),
+        name="notification-read",
     ),
     path("refresh/", 
          TokenRefreshView.as_view(),
