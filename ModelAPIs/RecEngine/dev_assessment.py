@@ -11,7 +11,7 @@ from .developmental_domains import DEVELOPMENTAL_LABELS, SUITABILITY_LABELS
 # ==========================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "models" / "dev_assessment"
+MODEL_PATH = BASE_DIR / "models" / "dev_assessment"  # when loading model change path to Broduro23/BERT-dev_assessment-suitability 
 CHECKPOINT_PATH = MODEL_PATH / "dev_assessment.pth"
 
 MAX_LENGTH = 160

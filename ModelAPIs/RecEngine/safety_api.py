@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "models" / "safety_classification"
+MODEL_PATH = BASE_DIR / "models" / "safety_classification" # when loading model change path to Broduro23/Bert_Safety_Classification 
 
 
 
